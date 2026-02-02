@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "gmail": {
+      "command": "C:\\tpml-ai-team\\mcp-servers\\mcp-gmail\\.venv\\Scripts\\mcp.exe",
+      "args": [
+        "run",
+        "mcp_gmail/server.py:mcp"
+      ],
+      "cwd": "C:\\tpml-ai-team\\mcp-servers\\mcp-gmail",
+      "env": {
+        "MCP_GMAIL_CREDENTIALS_PATH": "C:\\tpml-ai-team\\mcp-servers\\mcp-gmail\\credentials.json",
+        "MCP_GMAIL_TOKEN_PATH": "C:\\tpml-ai-team\\mcp-servers\\mcp-gmail\\token.json",
+        "MCP_GMAIL_MAX_RESULTS": "50"
+      }
+    }
+  }
+}
