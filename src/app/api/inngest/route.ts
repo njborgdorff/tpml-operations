@@ -1905,6 +1905,7 @@ const handleSprintCompleted = inngest.createFunction(
     const {
       projectId,
       projectName,
+      completedSprintId,
       completedSprintNumber,
       completedSprintName,
       reviewSummary,
@@ -1952,6 +1953,12 @@ const handleSprintCompleted = inngest.createFunction(
           elements: [
             {
               type: 'button',
+              text: { type: 'plain_text', text: '📝 Provide Feedback', emoji: true },
+              url: `${baseUrl}/projects/${projectId}?sprint=${completedSprintId}&feedback=true`,
+              action_id: 'provide_feedback',
+            },
+            {
+              type: 'button',
               text: { type: 'plain_text', text: '✅ Approve & Start Sprint', emoji: true },
               style: 'primary',
               action_id: `sprint_approve_${nextSprintId}`,
@@ -1964,18 +1971,12 @@ const handleSprintCompleted = inngest.createFunction(
               action_id: `sprint_reject_${nextSprintId}`,
               value: JSON.stringify({ sprintId: nextSprintId, projectId, action: 'reject' }),
             },
-            {
-              type: 'button',
-              text: { type: 'plain_text', text: '🔗 View in Dashboard', emoji: true },
-              url: `${baseUrl}/projects/${projectId}`,
-              action_id: 'view_project',
-            },
           ],
         },
         {
           type: 'context',
           elements: [
-            { type: 'mrkdwn', text: `_Sprint ${nextSprintNumber} is AWAITING_APPROVAL - will not start until approved_` },
+            { type: 'mrkdwn', text: `_Provide feedback before approving • Sprint ${nextSprintNumber} is AWAITING_APPROVAL_` },
           ],
         },
       ]);
@@ -2163,6 +2164,188 @@ const handleProjectCompleted = inngest.createFunction(
   }
 );
 
+/**
+ * Handle sprint feedback - process owner feedback and allow AI to ask clarifying questions
+ */
+const handleSprintFeedback = inngest.createFunction(
+  {
+    id: 'sprint-feedback-handler',
+    name: 'Handle Sprint Feedback',
+  },
+  { event: 'sprint/feedback_received' },
+  async ({ event, step }) => {
+    const {
+      projectId,
+      projectName,
+      sprintId,
+      sprintNumber,
+      sprintStatus,
+      reviewId,
+      feedbackType,
+      content,
+      conversationHistory,
+    } = event.data;
+    const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+
+    // Step 1: Post the feedback to Slack for visibility
+    const feedbackMessage = await step.run('post-feedback', async () => {
+      const isResponse = feedbackType === 'response';
+      return postAsRole('PM', channel, `Owner ${isResponse ? 'responded' : 'provided feedback'}`, [
+        {
+          type: 'header',
+          text: {
+            type: 'plain_text',
+            text: isResponse ? '💬 Owner Response' : '📝 Sprint Feedback Received',
+            emoji: true,
+          },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*${projectName}* - Sprint ${sprintNumber}\n\n${content}`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Feedback conversation: ${conversationHistory.length} message(s)_` },
+          ],
+        },
+      ]);
+    });
+
+    // Step 2: Have PM analyze feedback and decide if clarification is needed
+    const pmAnalysis = await step.run('pm-analyze-feedback', async () => {
+      const historyContext = conversationHistory
+        .map((entry: { type: string; from: string; content: string }) => `[${entry.from}]: ${entry.content}`)
+        .join('\n');
+
+      return generateRoleResponse(
+        'PM',
+        `Review this feedback conversation for Sprint ${sprintNumber} of "${projectName}":\n\n${historyContext}\n\nAs PM, analyze this feedback. If you have clarifying questions that would help the team proceed, ask ONE specific question. If the feedback is clear, acknowledge it and summarize the key takeaways for the team.\n\nRespond in this format:\n- If you have a question: "QUESTION: [your question]"\n- If feedback is clear: "ACKNOWLEDGED: [summary of key points]"`,
+        channel,
+        feedbackMessage?.ts
+      );
+    });
+
+    // Step 3: Determine if PM has a question or is acknowledging
+    const hasQuestion = pmAnalysis.response.toUpperCase().startsWith('QUESTION:');
+
+    if (hasQuestion) {
+      // Extract the question
+      const question = pmAnalysis.response.replace(/^QUESTION:\s*/i, '').trim();
+
+      // Store the question in the conversation log via API
+      await step.run('store-ai-question', async () => {
+        // We need to update the sprint review with the AI question
+        const response = await fetch(`${baseUrl}/api/sprints/${sprintId}/feedback/ai-question`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reviewId,
+            role: 'PM',
+            question,
+          }),
+        });
+        return response.json();
+      });
+
+      // Post question to Slack with response button
+      await step.run('post-question', async () => {
+        return postAsRole('PM', channel, question, [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `❓ *Clarifying Question*\n\n${question}`,
+            },
+          },
+          {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '💬 Respond in Dashboard', emoji: true },
+                url: `${baseUrl}/projects/${projectId}?sprint=${sprintId}&respond=true`,
+                action_id: 'respond_to_question',
+              },
+            ],
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Awaiting owner response to continue_` },
+            ],
+          },
+        ], feedbackMessage?.ts);
+      });
+
+      return {
+        success: true,
+        action: 'question_asked',
+        question,
+        projectId,
+        sprintNumber,
+      };
+    } else {
+      // Feedback acknowledged - extract key points
+      const acknowledgment = pmAnalysis.response.replace(/^ACKNOWLEDGED:\s*/i, '').trim();
+
+      // Store acknowledgment in conversation log
+      await step.run('store-acknowledgment', async () => {
+        const response = await fetch(`${baseUrl}/api/sprints/${sprintId}/feedback/ai-question`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reviewId,
+            role: 'PM',
+            acknowledgment,
+          }),
+        });
+        return response.json();
+      });
+
+      // Post acknowledgment to Slack
+      await step.run('post-acknowledgment', async () => {
+        return postAsRole('PM', channel, acknowledgment, [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `✅ *Feedback Acknowledged*\n\n${acknowledgment}`,
+            },
+          },
+        ], feedbackMessage?.ts);
+      });
+
+      // If sprint is AWAITING_APPROVAL, remind about approval buttons
+      if (sprintStatus === 'AWAITING_APPROVAL') {
+        await step.run('remind-approval', async () => {
+          return postAsRole('PM', channel, 'Ready for approval decision', [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: `📋 Sprint ${sprintNumber} is ready for your approval decision. Use the approval buttons above or visit the dashboard.`,
+              },
+            },
+          ], feedbackMessage?.ts);
+        });
+      }
+
+      return {
+        success: true,
+        action: 'acknowledged',
+        summary: acknowledgment,
+        projectId,
+        sprintNumber,
+      };
+    }
+  }
+);
+
 // All functions to serve
 const functions = [
   testFunction,
@@ -2192,6 +2375,7 @@ const functions = [
   handleSprintApproved,
   handleSprintRejected,
   handleProjectCompleted,
+  handleSprintFeedback,
 ];
 
 // Create and export the serve handler

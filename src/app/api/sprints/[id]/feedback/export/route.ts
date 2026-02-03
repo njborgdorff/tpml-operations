@@ -1,0 +1,222 @@
+import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/prisma';
+
+/**
+ * POST /api/sprints/[id]/feedback/export
+ *
+ * Export the sprint feedback conversation as a project artifact.
+ * This creates a permanent record of the dialog for project documentation.
+ */
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { id } = await params;
+
+    const sprint = await prisma.sprint.findUnique({
+      where: { id },
+      include: {
+        project: {
+          select: { id: true, name: true, slug: true, ownerId: true },
+        },
+        reviews: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    if (!sprint) {
+      return NextResponse.json({ error: 'Sprint not found' }, { status: 404 });
+    }
+
+    if (sprint.project.ownerId !== session.user.id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const latestReview = sprint.reviews[0];
+    if (!latestReview || !latestReview.conversationLog) {
+      return NextResponse.json(
+        { error: 'No feedback conversation to export' },
+        { status: 400 }
+      );
+    }
+
+    const conversationLog = latestReview.conversationLog as unknown as FeedbackEntry[];
+
+    // Generate markdown document from conversation
+    const markdownContent = generateFeedbackDocument(
+      sprint.project.name,
+      sprint.number,
+      sprint.name || `Sprint ${sprint.number}`,
+      conversationLog,
+      latestReview.statusDocument || undefined
+    );
+
+    // Check if artifact already exists
+    const existingArtifact = await prisma.artifact.findFirst({
+      where: {
+        projectId: sprint.project.id,
+        type: 'SPRINT_STATUS',
+        name: `SPRINT_${sprint.number}_FEEDBACK.md`,
+      },
+    });
+
+    let artifact;
+    if (existingArtifact) {
+      // Update existing artifact
+      artifact = await prisma.artifact.update({
+        where: { id: existingArtifact.id },
+        data: {
+          content: markdownContent,
+          version: existingArtifact.version + 1,
+        },
+      });
+    } else {
+      // Create new artifact
+      artifact = await prisma.artifact.create({
+        data: {
+          projectId: sprint.project.id,
+          type: 'SPRINT_STATUS',
+          name: `SPRINT_${sprint.number}_FEEDBACK.md`,
+          content: markdownContent,
+          version: 1,
+        },
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      artifact: {
+        id: artifact.id,
+        name: artifact.name,
+        version: artifact.version,
+      },
+      messageCount: conversationLog.length,
+    });
+  } catch (error) {
+    console.error('Failed to export feedback:', error);
+    return NextResponse.json(
+      { error: 'Failed to export feedback' },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * Generate a markdown document from the feedback conversation
+ */
+function generateFeedbackDocument(
+  projectName: string,
+  sprintNumber: number,
+  sprintName: string,
+  conversation: FeedbackEntry[],
+  statusDocument?: string
+): string {
+  const timestamp = new Date().toISOString().split('T')[0];
+
+  let content = `# Sprint ${sprintNumber} Feedback Dialog
+
+**Project:** ${projectName}
+**Sprint:** ${sprintName}
+**Date:** ${timestamp}
+
+## Summary
+
+This document captures the feedback conversation between the project owner and the AI team following Sprint ${sprintNumber} completion.
+
+`;
+
+  if (statusDocument) {
+    content += `## Sprint Status
+
+${statusDocument}
+
+`;
+  }
+
+  content += `## Feedback Conversation
+
+`;
+
+  for (const entry of conversation) {
+    const time = new Date(entry.timestamp).toLocaleString();
+    const icon = getEntryIcon(entry.type);
+
+    content += `### ${icon} ${entry.from} (${time})
+
+`;
+
+    if (entry.type === 'ai_question') {
+      content += `**Question:** ${entry.content}
+
+`;
+    } else if (entry.type === 'ai_acknowledgment') {
+      content += `**Acknowledgment:** ${entry.content}
+
+`;
+    } else {
+      content += `${entry.content}
+
+`;
+    }
+  }
+
+  content += `---
+
+## Key Takeaways
+
+`;
+
+  // Extract acknowledgments as key takeaways
+  const acknowledgments = conversation.filter(e => e.type === 'ai_acknowledgment');
+  if (acknowledgments.length > 0) {
+    for (const ack of acknowledgments) {
+      content += `- ${ack.content.substring(0, 200)}${ack.content.length > 200 ? '...' : ''}
+`;
+    }
+  } else {
+    content += `_No formal acknowledgments recorded. Review conversation above for context._
+
+`;
+  }
+
+  content += `
+---
+
+*Generated by TPML Operations Dashboard*
+`;
+
+  return content;
+}
+
+function getEntryIcon(type: string): string {
+  switch (type) {
+    case 'feedback':
+      return '📝';
+    case 'ai_question':
+      return '❓';
+    case 'human_response':
+      return '💬';
+    case 'ai_acknowledgment':
+      return '✅';
+    default:
+      return '📌';
+  }
+}
+
+interface FeedbackEntry {
+  type: 'feedback' | 'ai_question' | 'human_response' | 'ai_acknowledgment';
+  from: string;
+  content: string;
+  timestamp: string;
+  questionId?: string;
+}
