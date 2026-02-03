@@ -2126,10 +2126,10 @@ IMPORTANT: This is autonomous implementation. Proceed with coding - no human app
     // After Implementer outlines their plan, continue through Review and QA
     // If issues are found, loop back to Implementer for fixes
     // Human approval only required at sprint completion
-    // Max 3 iterations to prevent infinite loops
+    // Max iterations to prevent infinite loops (increased for testing convergence)
     // =========================================================================
 
-    const MAX_ITERATIONS = 3;
+    const MAX_ITERATIONS = 10; // Increased from 3 for testing
     // Include Claude Code output in the implementation context for review
     let currentImplementation = codeResult.success
       ? `${implementerResponse.response}\n\n## Claude Code Implementation Output\n\n${codeResult.output}`
