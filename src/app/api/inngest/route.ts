@@ -1893,7 +1893,7 @@ const handleProjectKickoff = inngest.createFunction(
 );
 
 /**
- * Handle sprint completion - notify team and trigger next steps
+ * Handle sprint completion - request human approval for next sprint
  */
 const handleSprintCompleted = inngest.createFunction(
   {
@@ -1902,33 +1902,207 @@ const handleSprintCompleted = inngest.createFunction(
   },
   { event: 'sprint/completed' },
   async ({ event, step }) => {
-    const { projectId, projectName, sprintNumber, sprintName: _sprintName, nextSprintNumber } = event.data;
+    const {
+      projectId,
+      projectName,
+      completedSprintNumber,
+      completedSprintName,
+      reviewSummary,
+      nextSprintId,
+      nextSprintNumber,
+      nextSprintName,
+      nextSprintGoal,
+    } = event.data;
     const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
-    // Announce sprint completion
+    // Announce sprint completion and request approval
     await step.run('announce-completion', async () => {
-      const hasNextSprint = nextSprintNumber !== null;
-      const message = hasNextSprint
-        ? `Sprint ${sprintNumber} complete! Moving to Sprint ${nextSprintNumber}.`
-        : `Sprint ${sprintNumber} complete! This was the final sprint for ${projectName}.`;
-
-      return postAsRole('PM', channel, message, [
+      return postAsRole('PM', channel, `Sprint ${completedSprintNumber} complete - approval needed`, [
         {
           type: 'header',
+          text: { type: 'plain_text', text: '✅ Sprint Complete - Approval Required', emoji: true },
+        },
+        {
+          type: 'section',
           text: {
-            type: 'plain_text',
-            text: hasNextSprint ? '✅ Sprint Complete' : '🎉 Project Complete!',
-            emoji: true,
+            type: 'mrkdwn',
+            text: `*${projectName}* - Sprint ${completedSprintNumber} (${completedSprintName}) is complete!\n\n${reviewSummary ? `*Review Summary:*\n${reviewSummary.substring(0, 500)}${reviewSummary.length > 500 ? '...' : ''}` : '_No review summary available_'}`,
+          },
+        },
+        {
+          type: 'divider',
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*Next Up:* Sprint ${nextSprintNumber} - ${nextSprintName}\n${nextSprintGoal ? `*Goal:* ${nextSprintGoal}` : ''}`,
           },
         },
         {
           type: 'section',
-          text: { type: 'mrkdwn', text: `*${projectName}*\n\n${message}` },
+          text: {
+            type: 'mrkdwn',
+            text: `⏳ *Human approval required to start Sprint ${nextSprintNumber}*`,
+          },
+        },
+        {
+          type: 'actions',
+          elements: [
+            {
+              type: 'button',
+              text: { type: 'plain_text', text: '✅ Approve & Start Sprint', emoji: true },
+              style: 'primary',
+              action_id: `sprint_approve_${nextSprintId}`,
+              value: JSON.stringify({ sprintId: nextSprintId, projectId, action: 'approve' }),
+            },
+            {
+              type: 'button',
+              text: { type: 'plain_text', text: '❌ Reject / Re-plan', emoji: true },
+              style: 'danger',
+              action_id: `sprint_reject_${nextSprintId}`,
+              value: JSON.stringify({ sprintId: nextSprintId, projectId, action: 'reject' }),
+            },
+            {
+              type: 'button',
+              text: { type: 'plain_text', text: '🔗 View in Dashboard', emoji: true },
+              url: `${baseUrl}/projects/${projectId}`,
+              action_id: 'view_project',
+            },
+          ],
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Sprint ${nextSprintNumber} is AWAITING_APPROVAL - will not start until approved_` },
+          ],
         },
       ]);
     });
 
-    return { success: true, projectId, sprintNumber };
+    return { success: true, projectId, completedSprintNumber, awaitingApproval: nextSprintId };
+  }
+);
+
+/**
+ * Handle sprint approval - invoke Implementer for the new sprint
+ */
+const handleSprintApproved = inngest.createFunction(
+  {
+    id: 'sprint-approved-handler',
+    name: 'Handle Sprint Approved',
+  },
+  { event: 'sprint/approved' },
+  async ({ event, step }) => {
+    const {
+      projectId,
+      projectName,
+      sprintId: _sprintId,
+      sprintNumber,
+      sprintName,
+      sprintGoal,
+      approvalNotes,
+      previousSprintReview,
+      handoffContent,
+    } = event.data;
+    const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+
+    // Step 1: CTO announces sprint start
+    const startMessage = await step.run('announce-sprint-start', async () => {
+      return postAsRole('CTO', channel, `Sprint ${sprintNumber} approved and starting`, [
+        {
+          type: 'header',
+          text: { type: 'plain_text', text: '🚀 Sprint Approved & Starting', emoji: true },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) is now in progress!\n\n${sprintGoal ? `*Sprint Goal:* ${sprintGoal}` : ''}${approvalNotes ? `\n\n*Approval Notes:* ${approvalNotes}` : ''}`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Human-approved at ${new Date().toLocaleString()}_` },
+          ],
+        },
+      ]);
+    });
+
+    // Step 2: Build context for Implementer
+    const context = await step.run('build-context', async () => {
+      let ctx = `Starting Sprint ${sprintNumber} (${sprintName}) for project "${projectName}".`;
+      if (sprintGoal) ctx += ` Sprint goal: ${sprintGoal}.`;
+      if (previousSprintReview) ctx += `\n\nPrevious sprint review:\n${previousSprintReview}`;
+      if (approvalNotes) ctx += `\n\nOwner approval notes: ${approvalNotes}`;
+      if (handoffContent) ctx += `\n\nOriginal handoff context:\n${handoffContent.substring(0, 500)}...`;
+      return ctx;
+    });
+
+    // Step 3: Invoke Implementer to begin work
+    const implementerResponse = await step.run('invoke-implementer', async () => {
+      return generateRoleResponse(
+        'Implementer',
+        `${context}\n\nWhat are your first steps for Sprint ${sprintNumber}?`,
+        channel,
+        startMessage?.ts
+      );
+    });
+
+    // Step 4: Post Implementer's response
+    await step.run('post-implementer-response', async () => {
+      return postAsRole('Implementer', channel, implementerResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: implementerResponse.response },
+        },
+      ], startMessage?.ts);
+    });
+
+    console.log(`[Sprint] Sprint ${sprintNumber} of ${projectName} approved - Implementer invoked`);
+
+    return {
+      success: true,
+      projectId,
+      sprintNumber,
+      implementerInvoked: true,
+      messageTs: startMessage?.ts,
+    };
+  }
+);
+
+/**
+ * Handle sprint rejection - notify team
+ */
+const handleSprintRejected = inngest.createFunction(
+  {
+    id: 'sprint-rejected-handler',
+    name: 'Handle Sprint Rejected',
+  },
+  { event: 'sprint/rejected' },
+  async ({ event, step }) => {
+    const { projectName, sprintNumber, sprintName, rejectionReason } = event.data;
+    const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+
+    await step.run('announce-rejection', async () => {
+      return postAsRole('PM', channel, `Sprint ${sprintNumber} requires re-planning`, [
+        {
+          type: 'header',
+          text: { type: 'plain_text', text: '⚠️ Sprint Needs Re-planning', emoji: true },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) was not approved.\n\n${rejectionReason ? `*Reason:* ${rejectionReason}` : '_No reason provided_'}\n\nSprint has been reset to PLANNED status for re-scoping.`,
+          },
+        },
+      ]);
+    });
+
+    return { success: true, sprintNumber };
   }
 );
 
@@ -2015,6 +2189,8 @@ const functions = [
   // Project lifecycle
   handleProjectKickoff,
   handleSprintCompleted,
+  handleSprintApproved,
+  handleSprintRejected,
   handleProjectCompleted,
 ];
 

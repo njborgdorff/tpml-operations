@@ -4,6 +4,10 @@ import { authOptions } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
 import { SprintStatus } from '@prisma/client';
 import { syncKnowledgeBase } from '@/lib/knowledge/sync';
+import { Inngest } from 'inngest';
+
+// Initialize Inngest client for sending events
+const inngest = new Inngest({ id: 'tpml-code-team' });
 
 /**
  * GET /api/sprints/[id]
@@ -129,8 +133,14 @@ export async function PATCH(
       data: updateData,
     });
 
-    // If sprint completed, check if we should start the next sprint
+    // If sprint completed, handle next sprint workflow with human-in-the-loop
     if (status === 'COMPLETED') {
+      // Fetch project details for event data
+      const project = await prisma.project.findUnique({
+        where: { id: sprint.projectId },
+        include: { client: true },
+      });
+
       const nextSprint = await prisma.sprint.findFirst({
         where: {
           projectId: sprint.projectId,
@@ -139,20 +149,59 @@ export async function PATCH(
       });
 
       if (nextSprint) {
-        // Auto-start next sprint
+        // Mark next sprint as awaiting approval (human-in-the-loop)
         await prisma.sprint.update({
           where: { id: nextSprint.id },
-          data: {
-            status: 'IN_PROGRESS',
-            startedAt: new Date(),
-          },
+          data: { status: 'AWAITING_APPROVAL' },
         });
+
+        // Emit event to request human approval for next sprint
+        try {
+          await inngest.send({
+            name: 'sprint/completed',
+            data: {
+              projectId: sprint.projectId,
+              projectName: project?.name || 'Unknown',
+              projectSlug: project?.slug || 'unknown',
+              clientName: project?.client.name || 'Unknown',
+              completedSprintId: sprint.id,
+              completedSprintNumber: sprint.number,
+              completedSprintName: sprint.name,
+              reviewSummary: updatedSprint.reviewSummary,
+              nextSprintId: nextSprint.id,
+              nextSprintNumber: nextSprint.number,
+              nextSprintName: nextSprint.name,
+              nextSprintGoal: nextSprint.goal,
+            },
+          });
+          console.log(`[Sprints] Sent sprint/completed event for ${project?.name} Sprint ${sprint.number}`);
+        } catch (err) {
+          console.error('[Sprints] Failed to send Inngest event:', err);
+        }
       } else {
-        // No more sprints - mark project as completed
+        // No more sprints - emit project completion event
         await prisma.project.update({
           where: { id: sprint.projectId },
           data: { status: 'COMPLETED' },
         });
+
+        try {
+          await inngest.send({
+            name: 'project/completed',
+            data: {
+              projectId: sprint.projectId,
+              projectName: project?.name || 'Unknown',
+              projectSlug: project?.slug || 'unknown',
+              clientName: project?.client.name || 'Unknown',
+              finalSprintId: sprint.id,
+              finalSprintNumber: sprint.number,
+              totalSprints: sprint.number,
+            },
+          });
+          console.log(`[Sprints] Sent project/completed event for ${project?.name}`);
+        } catch (err) {
+          console.error('[Sprints] Failed to send project/completed event:', err);
+        }
       }
 
       // Sync knowledge base when sprint completes (updates project status)

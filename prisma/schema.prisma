@@ -153,6 +153,7 @@ enum SprintStatus {
   ACTIVE
   REVIEW
   COMPLETED
+  AWAITING_APPROVAL  // Next sprint waiting for human approval to start
 }
 
 model SprintReview {

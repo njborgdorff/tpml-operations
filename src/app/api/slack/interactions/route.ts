@@ -91,7 +91,47 @@ export async function POST(request: NextRequest) {
       for (const action of payload.actions) {
         console.log('[Slack Interactions] Action:', action.action_id);
 
-        // Send a response to Slack
+        // Handle sprint approval/rejection
+        if (action.action_id.startsWith('sprint_approve_') || action.action_id.startsWith('sprint_reject_')) {
+          const isApproval = action.action_id.startsWith('sprint_approve_');
+          const actionData = action.value ? JSON.parse(action.value) : {};
+          const sprintId = actionData.sprintId;
+
+          console.log(`[Slack Interactions] Sprint ${isApproval ? 'approval' : 'rejection'} for:`, sprintId);
+
+          // Call the approve/reject API endpoint
+          const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+          const apiResponse = await fetch(`${baseUrl}/api/sprints/${sprintId}/approve`, {
+            method: isApproval ? 'POST' : 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              approvalNotes: isApproval ? `Approved via Slack by ${payload.user.username}` : undefined,
+              rejectionReason: !isApproval ? `Rejected via Slack by ${payload.user.username}` : undefined,
+            }),
+          });
+
+          const apiResult = await apiResponse.json();
+          console.log('[Slack Interactions] API response:', apiResult);
+
+          // Send acknowledgment to Slack
+          if (payload.response_url) {
+            const responseText = isApproval
+              ? `✅ Sprint approved and started by <@${payload.user.id}>. Implementer will be notified.`
+              : `⚠️ Sprint rejected by <@${payload.user.id}>. Reset to PLANNED for re-scoping.`;
+
+            await fetch(payload.response_url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                replace_original: false,
+                text: responseText,
+              }),
+            });
+          }
+          continue;
+        }
+
+        // Send a response to Slack for other actions
         if (payload.response_url) {
           let responseText = `✅ Action received: ${action.action_id}`;
 
