@@ -97,7 +97,13 @@
       "Bash(.venv/Scripts/python:*)",
       "Bash(dir /s /b \"C:\\\\tpml-ai-team\\\\tpml-core\\\\knowledge\\\\*.md\")",
       "Bash(npx eslint:*)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(dir \"C:\\\\tpml-ai-team\\\\tpml-core\\\\knowledge\")",
+      "Bash(chmod:*)",
+      "Bash(npx ngrok --version)",
+      "Bash(dir:*)",
+      "Bash(npx next build:*)",
+      "WebFetch(domain:www.inngest.com)"
     ]
   },
   "enableAllProjectMcpServers": true,

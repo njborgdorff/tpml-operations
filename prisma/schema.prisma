@@ -224,3 +224,46 @@ enum ArtifactType {
   SUMMARY
   SPRINT_STATUS
 }
+
+// ============================================
+// KNOWLEDGE BASE
+// ============================================
+
+model KnowledgeEntry {
+  id          String            @id @default(cuid())
+
+  // Categorization
+  category    KnowledgeCategory
+  tags        String[]          // Searchable tags
+
+  // Content
+  title       String
+  content     String            @db.Text
+
+  // Source tracking
+  sourceRole  String            // Which AI role created this
+  sourceType  String            // slack_conversation, handoff, retrospective, incident, etc.
+  projectId   String?           // Optional link to project
+
+  // Verification status (human review)
+  verified    Boolean           @default(false)
+  verifiedAt  DateTime?
+  verifiedBy  String?
+
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([category, tags])
+  @@index([sourceRole])
+  @@index([projectId])
+  @@map("knowledge_entries")
+}
+
+enum KnowledgeCategory {
+  DECISION        // Technical or process decisions
+  LESSON_LEARNED  // What we learned from experience
+  PROCEDURE       // SOPs and how-to guides
+  CLIENT_INFO     // Client preferences and history
+  TECHNICAL       // Technical knowledge and patterns
+  INCIDENT        // Post-incident learnings
+}
