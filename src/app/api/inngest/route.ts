@@ -19,6 +19,9 @@ const inngest = new Inngest({ id: 'tpml-code-team' });
 // Prisma client for database access
 const prisma = new PrismaClient();
 
+// Worker service URL for Claude Code execution
+const WORKER_URL = process.env.WORKER_URL || 'http://159.203.110.19:3001';
+
 // ============================================================================
 // Role Bot Token Mapping
 // ============================================================================
@@ -2010,6 +2013,69 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
         ], kickoffMessage?.ts);
       });
     }
+
+    // Step 5.5: Trigger Claude Code worker for actual implementation
+    const workerResult = await step.run('trigger-worker-implementation', async () => {
+      try {
+        // Get project details including git repo
+        const project = await prisma.project.findUnique({
+          where: { id: projectId },
+          include: { codebase: true },
+        });
+
+        const gitRepo = project?.codebase?.repoUrl || undefined;
+
+        // Notify that Claude Code is starting
+        await postAsRole('Implementer', channel, 'Starting Claude Code session', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `🤖 *Starting Claude Code Session*\n\nI'm now running Claude Code to implement the Sprint ${sprintNumber} changes. This may take several minutes...`,
+            },
+          },
+        ], kickoffMessage?.ts);
+
+        // Call the worker
+        const response = await fetch(`${WORKER_URL}/api/implement`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId,
+            projectSlug: _projectSlug,
+            projectName,
+            sprintNumber,
+            sprintName,
+            handoffContent,
+            gitRepo,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Worker returned ${response.status}: ${await response.text()}`);
+        }
+
+        const result = await response.json();
+        console.log('[Kickoff] Worker triggered:', result);
+
+        return { triggered: true, result };
+      } catch (error) {
+        console.error('[Kickoff] Worker trigger failed:', error);
+
+        // Notify about failure but continue workflow
+        await postAsRole('Implementer', channel, 'Worker unavailable', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `⚠️ *Claude Code Worker Unavailable*\n\nCould not connect to the implementation worker. Continuing with bot-only workflow.\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            },
+          },
+        ], kickoffMessage?.ts);
+
+        return { triggered: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    });
 
     // =========================================================================
     // AUTOMATED ROLE-TO-ROLE WORKFLOW WITH FEEDBACK LOOPS
