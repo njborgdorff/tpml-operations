@@ -1855,12 +1855,16 @@ const handleProjectKickoff = inngest.createFunction(
     const implementerResponse = await step.run('invoke-implementer', async () => {
       // Build context with handoff document for the Implementer
       const implementerContext = handoffContent
-        ? `## Handoff Document (CTO → Implementer)\n\n${handoffContent}`
+        ? `## Handoff Document (CTO → Implementer)\n\nThe following handoff document has been provided to you. DO NOT ask for it - it is included below:\n\n${handoffContent}`
         : undefined;
+
+      const messagePrompt = handoffContent
+        ? `A new project "${projectName}" has just been kicked off. Sprint ${sprintNumber} (${sprintName}) is ready for implementation.\n\nIMPORTANT: The handoff document is included in your context above under "Additional Context". You already have all the information you need. DO NOT ask for the handoff document or sprint backlog - they are provided.\n\nBased on the handoff document provided, acknowledge what you've received and outline your first implementation steps.`
+        : `A new project "${projectName}" has just been kicked off. Sprint ${sprintNumber} (${sprintName}) is ready for implementation. Review the handoff document and begin work on the Sprint 1 backlog items. What are your first steps?`;
 
       return generateRoleResponse(
         'Implementer',
-        `A new project "${projectName}" has just been kicked off. Sprint ${sprintNumber} (${sprintName}) is ready for implementation. Review the handoff document and begin work on the Sprint 1 backlog items. What are your first steps?`,
+        messagePrompt,
         channel,
         kickoffMessage?.ts,
         implementerContext
