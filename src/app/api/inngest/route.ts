@@ -1179,7 +1179,8 @@ async function generateRoleResponse(
   role: AITeamRole,
   messageText: string,
   channelId?: string,
-  threadTs?: string
+  threadTs?: string,
+  additionalContext?: string
 ): Promise<{ response: string; knowledgeSaved?: { id: string; title: string } }> {
   const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
@@ -1206,7 +1207,11 @@ ${projectContext}
 ${knowledgeContext}
 
 ${recentKnowledge}
+${additionalContext ? `
+## Additional Context
 
+${additionalContext}
+` : ''}
 When responding, reference specific projects by name when relevant. You have access to real project data from the TPML Operations database. You are participating in a Slack conversation and should maintain conversational context from the thread history.
 
 Important: If you discover something valuable (a decision, lesson learned, procedure, technical insight), share it clearly so it can be captured in the knowledge base.`;
@@ -1848,11 +1853,17 @@ const handleProjectKickoff = inngest.createFunction(
 
     // Step 3: Invoke Implementer role to acknowledge and begin work
     const implementerResponse = await step.run('invoke-implementer', async () => {
+      // Build context with handoff document for the Implementer
+      const implementerContext = handoffContent
+        ? `## Handoff Document (CTO → Implementer)\n\n${handoffContent}`
+        : undefined;
+
       return generateRoleResponse(
         'Implementer',
         `A new project "${projectName}" has just been kicked off. Sprint ${sprintNumber} (${sprintName}) is ready for implementation. Review the handoff document and begin work on the Sprint 1 backlog items. What are your first steps?`,
         channel,
-        kickoffMessage?.ts
+        kickoffMessage?.ts,
+        implementerContext
       );
     });
 
