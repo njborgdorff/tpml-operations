@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { authOptions, canAccessProject } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
 import { syncKnowledgeBase } from '@/lib/knowledge/sync';
 import { Inngest } from 'inngest';
@@ -13,6 +13,7 @@ const inngest = new Inngest({ id: 'tpml-code-team' });
  *
  * Starts implementation for an approved project.
  * Creates the handoff document and updates sprint status.
+ * Optionally assigns an implementer who can view project documents.
  */
 export async function POST(
   request: Request,
@@ -25,6 +26,10 @@ export async function POST(
     }
 
     const { id } = await params;
+
+    // Parse optional implementerId from request body
+    const body = await request.json().catch(() => ({}));
+    const { implementerId } = body;
 
     // Get project with artifacts and sprints
     const project = await prisma.project.findUnique({
@@ -40,7 +45,7 @@ export async function POST(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    if (project.ownerId !== session.user.id) {
+    if (!canAccessProject(project, session.user.id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -69,6 +74,22 @@ export async function POST(
         { error: 'Missing required artifacts (BACKLOG or ARCHITECTURE)' },
         { status: 400 }
       );
+    }
+
+    // Validate implementer if provided
+    let implementer = null;
+    if (implementerId) {
+      implementer = await prisma.user.findUnique({
+        where: { id: implementerId },
+        select: { id: true, name: true, email: true },
+      });
+
+      if (!implementer) {
+        return NextResponse.json(
+          { error: 'Implementer user not found' },
+          { status: 400 }
+        );
+      }
     }
 
     // Determine project path for CLI commands
@@ -105,10 +126,13 @@ export async function POST(
       });
     }
 
-    // Update project status
+    // Update project status and optionally assign implementer
     await prisma.project.update({
       where: { id },
-      data: { status: 'IN_PROGRESS' },
+      data: {
+        status: 'IN_PROGRESS',
+        ...(implementerId && { implementerId }),
+      },
     });
 
     // Sync knowledge base (fire and forget)
@@ -144,6 +168,8 @@ export async function POST(
         name: project.name,
         slug: project.slug,
         status: 'IN_PROGRESS',
+        implementerId: implementerId || null,
+        implementer: implementer,
       },
       sprint: firstSprint ? {
         id: firstSprint.id,
@@ -197,7 +223,7 @@ export async function GET(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    if (project.ownerId !== session.user.id) {
+    if (!canAccessProject(project, session.user.id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

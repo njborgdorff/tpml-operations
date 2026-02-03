@@ -3,6 +3,16 @@ import CredentialsProvider from 'next-auth/providers/credentials';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/db/prisma';
 
+/**
+ * Check if a user can access a project (as owner or implementer)
+ */
+export function canAccessProject(
+  project: { ownerId: string; implementerId?: string | null },
+  userId: string
+): boolean {
+  return project.ownerId === userId || project.implementerId === userId;
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({

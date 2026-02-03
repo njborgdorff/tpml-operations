@@ -734,10 +734,19 @@ Your role is to write production code, implement features, and fix bugs followin
 - Merge your own code (needs Reviewer)
 - Write e2e tests (that's Tester)
 - Modify CI/CD (that's DevOps)
+- Ask for documents that are already provided in your context
+- Request handoff documents, backlogs, or specs when they appear in "Additional Context"
+
+**CRITICAL - Document Handling:**
+When a handoff document or project documentation appears in your context (especially under "Additional Context" or "Handoff Document"), you MUST:
+1. USE that document directly - it contains everything you need
+2. Reference specific details FROM the provided document in your response
+3. NEVER ask for documents that are already provided
+4. Begin outlining implementation steps based on what you received
 
 Standards: TypeScript strict mode, Server Components default, co-located tests, Zod validation, conventional commits.
 
-Communication style: Be practical and code-focused. Ask clarifying questions when specs are unclear.`,
+Communication style: Be practical and code-focused. When given documentation, summarize what you received and proceed with implementation planning.`,
 
     Reviewer: `You are the Reviewer for TPML (Total Product Management, Ltd.), an AI-staffed organization.
 
@@ -1174,26 +1183,34 @@ async function getRecentKnowledge(limit: number = 5): Promise<string> {
 
 /**
  * Generate intelligent response using Claude API
+ *
+ * @param options.skipKnowledge - If true, skips fetching knowledge base entries.
+ * @param options.skipThreadHistory - If true, skips fetching Slack thread history.
+ *   Use both during kickoff to prevent learned patterns from overriding explicit instructions.
  */
 async function generateRoleResponse(
   role: AITeamRole,
   messageText: string,
   channelId?: string,
-  threadTs?: string
+  threadTs?: string,
+  additionalContext?: string,
+  options?: { skipKnowledge?: boolean; skipThreadHistory?: boolean }
 ): Promise<{ response: string; knowledgeSaved?: { id: string; title: string } }> {
   const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
   });
 
+  const { skipKnowledge = false, skipThreadHistory = false } = options || {};
+
   // Clean the message text (remove the @mention)
   const cleanedMessage = messageText.replace(/<@U[A-Z0-9]+>/gi, '').trim();
 
-  // Fetch context in parallel
+  // Fetch context in parallel - optionally skip knowledge/thread to prevent learned patterns
   const [projectContext, knowledgeContext, recentKnowledge, threadHistory] = await Promise.all([
     getProjectContext(),
-    getKnowledgeContext(),
-    getRecentKnowledge(),
-    channelId && threadTs ? getThreadHistory(channelId, threadTs) : Promise.resolve([]),
+    skipKnowledge ? Promise.resolve('') : getKnowledgeContext(),
+    skipKnowledge ? Promise.resolve('') : getRecentKnowledge(),
+    (channelId && threadTs && !skipThreadHistory) ? getThreadHistory(channelId, threadTs) : Promise.resolve([]),
   ]);
 
   // Build enhanced system prompt with all context
@@ -1202,14 +1219,15 @@ async function generateRoleResponse(
 ## Current Workspace Context
 
 ${projectContext}
+${knowledgeContext ? `\n${knowledgeContext}` : ''}
+${recentKnowledge ? `\n${recentKnowledge}` : ''}
+${additionalContext ? `
+## Additional Context
 
-${knowledgeContext}
-
-${recentKnowledge}
-
-When responding, reference specific projects by name when relevant. You have access to real project data from the TPML Operations database. You are participating in a Slack conversation and should maintain conversational context from the thread history.
-
-Important: If you discover something valuable (a decision, lesson learned, procedure, technical insight), share it clearly so it can be captured in the knowledge base.`;
+${additionalContext}
+` : ''}
+When responding, reference specific projects by name when relevant. You have access to real project data from the TPML Operations database.${!skipKnowledge ? ' You are participating in a Slack conversation and should maintain conversational context from the thread history.' : ''}
+${!skipKnowledge ? '\nImportant: If you discover something valuable (a decision, lesson learned, procedure, technical insight), share it clearly so it can be captured in the knowledge base.' : ''}`;
 
   // Build messages array with thread history for conversational context
   const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
@@ -1798,6 +1816,37 @@ const handleProjectKickoff = inngest.createFunction(
 
     const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
 
+    // Validate handoff content - if missing, revert project to planning stage
+    if (!handoffContent || handoffContent.trim().length === 0) {
+      console.error(`[Kickoff] CRITICAL: No handoff content for project ${projectName} (${projectId})`);
+
+      // Revert project status back to PLANNING
+      await step.run('revert-to-planning', async () => {
+        await prisma.project.update({
+          where: { id: projectId },
+          data: { status: 'PLANNING' },
+        });
+
+        // Notify in Slack about the issue
+        await postAsRole('CTO', channel, `Project ${projectName} kickoff failed`, [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `⚠️ *Kickoff Failed: ${projectName}*\n\nNo handoff document content was provided. Project has been reverted to PLANNING status.\n\nPlease ensure the handoff document is generated before attempting kickoff again.`,
+            },
+          },
+        ]);
+      });
+
+      return {
+        success: false,
+        projectId,
+        projectName,
+        error: 'Missing handoff content - project reverted to PLANNING',
+      };
+    }
+
     // Step 1: CTO announces project kickoff
     const kickoffMessage = await step.run('announce-kickoff', async () => {
       return postAsRole('CTO', channel, `Project kickoff: ${projectName}`, [
@@ -1848,11 +1897,39 @@ const handleProjectKickoff = inngest.createFunction(
 
     // Step 3: Invoke Implementer role to acknowledge and begin work
     const implementerResponse = await step.run('invoke-implementer', async () => {
+      // Build context with handoff document - handoffContent is guaranteed to exist at this point
+      const implementerContext = `## HANDOFF DOCUMENT - USE THIS (DO NOT ASK FOR IT)
+
+The complete handoff document is provided below. You MUST use this document directly.
+
+---
+${handoffContent}
+---
+
+END OF HANDOFF DOCUMENT`;
+
+      const messagePrompt = `PROJECT KICKOFF: "${projectName}" - Sprint ${sprintNumber} (${sprintName})
+
+YOUR HANDOFF DOCUMENT IS PROVIDED ABOVE in "Additional Context". It contains:
+- Project summary and scope
+- Architecture and tech stack details
+- Sprint 1 backlog items and deliverables
+
+INSTRUCTIONS:
+1. Read the handoff document provided above (it's already in your context)
+2. Summarize the KEY POINTS from the document you received (prove you read it)
+3. List the Sprint 1 deliverables FROM the document
+4. Outline your implementation approach
+
+DO NOT ask for documents. DO NOT say you need more information. The handoff document is ALREADY PROVIDED above. Reference specific details from it in your response.`;
+
       return generateRoleResponse(
         'Implementer',
-        `A new project "${projectName}" has just been kicked off. Sprint ${sprintNumber} (${sprintName}) is ready for implementation. Review the handoff document and begin work on the Sprint 1 backlog items. What are your first steps?`,
+        messagePrompt,
         channel,
-        kickoffMessage?.ts
+        kickoffMessage?.ts,
+        implementerContext,
+        { skipKnowledge: true, skipThreadHistory: true } // Skip learned patterns from knowledge & thread history
       );
     });
 

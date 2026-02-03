@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { authOptions, canAccessProject } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
 import { Inngest } from 'inngest';
 
@@ -13,6 +13,7 @@ const inngest = new Inngest({ id: 'tpml-code-team' });
  * Re-emit the kickoff event for a project that was kicked off but
  * never triggered the Inngest workflow (e.g., before Inngest was configured).
  * This allows projects to be initiated without resetting their state.
+ * Optionally assigns an implementer who can view project documents.
  */
 export async function POST(
   request: Request,
@@ -25,6 +26,10 @@ export async function POST(
     }
 
     const { id } = await params;
+
+    // Parse optional implementerId from request body
+    const body = await request.json().catch(() => ({}));
+    const { implementerId } = body;
 
     // Get project with all required data
     const project = await prisma.project.findUnique({
@@ -40,7 +45,7 @@ export async function POST(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    if (project.ownerId !== session.user.id) {
+    if (!canAccessProject(project, session.user.id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -71,6 +76,28 @@ export async function POST(
         { error: 'No handoff document found. Project may not have been properly kicked off.' },
         { status: 400 }
       );
+    }
+
+    // Validate and assign implementer if provided
+    let implementer = null;
+    if (implementerId) {
+      implementer = await prisma.user.findUnique({
+        where: { id: implementerId },
+        select: { id: true, name: true, email: true },
+      });
+
+      if (!implementer) {
+        return NextResponse.json(
+          { error: 'Implementer user not found' },
+          { status: 400 }
+        );
+      }
+
+      // Update project with new implementer
+      await prisma.project.update({
+        where: { id },
+        data: { implementerId },
+      });
     }
 
     // Determine project path
@@ -113,6 +140,8 @@ export async function POST(
         name: project.name,
         slug: project.slug,
         status: project.status,
+        implementerId: implementerId || project.implementerId || null,
+        implementer: implementer,
       },
       sprint: {
         id: activeSprint.id,
@@ -162,7 +191,7 @@ export async function GET(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    if (project.ownerId !== session.user.id) {
+    if (!canAccessProject(project, session.user.id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
