@@ -1183,26 +1183,32 @@ async function getRecentKnowledge(limit: number = 5): Promise<string> {
 
 /**
  * Generate intelligent response using Claude API
+ *
+ * @param options.skipKnowledge - If true, skips fetching knowledge base entries.
+ *   Use this during kickoff to prevent learned patterns from overriding explicit instructions.
  */
 async function generateRoleResponse(
   role: AITeamRole,
   messageText: string,
   channelId?: string,
   threadTs?: string,
-  additionalContext?: string
+  additionalContext?: string,
+  options?: { skipKnowledge?: boolean }
 ): Promise<{ response: string; knowledgeSaved?: { id: string; title: string } }> {
   const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
   });
 
+  const { skipKnowledge = false } = options || {};
+
   // Clean the message text (remove the @mention)
   const cleanedMessage = messageText.replace(/<@U[A-Z0-9]+>/gi, '').trim();
 
-  // Fetch context in parallel
+  // Fetch context in parallel - optionally skip knowledge to prevent learned patterns from interfering
   const [projectContext, knowledgeContext, recentKnowledge, threadHistory] = await Promise.all([
     getProjectContext(),
-    getKnowledgeContext(),
-    getRecentKnowledge(),
+    skipKnowledge ? Promise.resolve('') : getKnowledgeContext(),
+    skipKnowledge ? Promise.resolve('') : getRecentKnowledge(),
     channelId && threadTs ? getThreadHistory(channelId, threadTs) : Promise.resolve([]),
   ]);
 
@@ -1212,18 +1218,15 @@ async function generateRoleResponse(
 ## Current Workspace Context
 
 ${projectContext}
-
-${knowledgeContext}
-
-${recentKnowledge}
+${knowledgeContext ? `\n${knowledgeContext}` : ''}
+${recentKnowledge ? `\n${recentKnowledge}` : ''}
 ${additionalContext ? `
 ## Additional Context
 
 ${additionalContext}
 ` : ''}
-When responding, reference specific projects by name when relevant. You have access to real project data from the TPML Operations database. You are participating in a Slack conversation and should maintain conversational context from the thread history.
-
-Important: If you discover something valuable (a decision, lesson learned, procedure, technical insight), share it clearly so it can be captured in the knowledge base.`;
+When responding, reference specific projects by name when relevant. You have access to real project data from the TPML Operations database.${!skipKnowledge ? ' You are participating in a Slack conversation and should maintain conversational context from the thread history.' : ''}
+${!skipKnowledge ? '\nImportant: If you discover something valuable (a decision, lesson learned, procedure, technical insight), share it clearly so it can be captured in the knowledge base.' : ''}`;
 
   // Build messages array with thread history for conversational context
   const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
@@ -1924,7 +1927,8 @@ DO NOT ask for documents. DO NOT say you need more information. The handoff docu
         messagePrompt,
         channel,
         kickoffMessage?.ts,
-        implementerContext
+        implementerContext,
+        { skipKnowledge: true } // Skip knowledge base to prevent learned patterns from overriding handoff
       );
     });
 
