@@ -3,6 +3,10 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
 import { syncKnowledgeBase } from '@/lib/knowledge/sync';
+import { Inngest } from 'inngest';
+
+// Initialize Inngest client for sending events
+const inngest = new Inngest({ id: 'tpml-code-team' });
 
 /**
  * POST /api/projects/[id]/kickoff
@@ -109,6 +113,28 @@ export async function POST(
 
     // Sync knowledge base (fire and forget)
     syncKnowledgeBase().catch(err => console.error('[Kickoff] Knowledge sync failed:', err));
+
+    // Emit Inngest event to trigger Slack notification and AI role invocation
+    try {
+      await inngest.send({
+        name: 'project/kicked_off',
+        data: {
+          projectId: project.id,
+          projectName: project.name,
+          projectSlug: project.slug,
+          clientName: project.client.name,
+          sprintId: firstSprint?.id,
+          sprintNumber: firstSprint?.number || 1,
+          sprintName: firstSprint?.name || 'Sprint 1',
+          handoffContent,
+          projectPath,
+        },
+      });
+      console.log(`[Kickoff] Sent project/kicked_off event for ${project.name}`);
+    } catch (err) {
+      console.error('[Kickoff] Failed to send Inngest event:', err);
+      // Don't fail the kickoff if event sending fails
+    }
 
     return NextResponse.json({
       success: true,

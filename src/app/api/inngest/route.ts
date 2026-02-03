@@ -1771,6 +1771,224 @@ const dailyProjectSummary = inngest.createFunction(
   }
 );
 
+// ============================================================================
+// Project Lifecycle Events
+// ============================================================================
+
+/**
+ * Handle project kickoff - notify team and invoke Implementer
+ */
+const handleProjectKickoff = inngest.createFunction(
+  {
+    id: 'project-kickoff-handler',
+    name: 'Handle Project Kickoff',
+  },
+  { event: 'project/kicked_off' },
+  async ({ event, step }) => {
+    const {
+      projectId,
+      projectName,
+      projectSlug: _projectSlug,
+      clientName,
+      sprintId: _sprintId,
+      sprintNumber,
+      sprintName,
+      handoffContent,
+    } = event.data;
+
+    const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+
+    // Step 1: CTO announces project kickoff
+    const kickoffMessage = await step.run('announce-kickoff', async () => {
+      return postAsRole('CTO', channel, `Project kickoff: ${projectName}`, [
+        {
+          type: 'header',
+          text: { type: 'plain_text', text: '🚀 Project Kickoff', emoji: true },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*${projectName}* for *${clientName}* is now in implementation!\n\n*Sprint ${sprintNumber}:* ${sprintName}`,
+          },
+        },
+        {
+          type: 'section',
+          fields: [
+            { type: 'mrkdwn', text: `*Project ID:*\n\`${projectId}\`` },
+            { type: 'mrkdwn', text: `*Status:*\nIN_PROGRESS` },
+          ],
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Handoff from CTO to Implementer complete_` },
+          ],
+        },
+      ]);
+    });
+
+    // Step 2: Post handoff summary
+    await step.run('post-handoff-summary', async () => {
+      // Extract key points from handoff for Slack
+      const handoffSummary = handoffContent
+        ? handoffContent.substring(0, 800) + (handoffContent.length > 800 ? '...' : '')
+        : 'See HANDOFF document for details';
+
+      return postAsRole('CTO', channel, 'Handoff document ready', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `📋 *Handoff: CTO → Implementer*\n\n\`\`\`${handoffSummary}\`\`\``,
+          },
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 3: Invoke Implementer role to acknowledge and begin work
+    const implementerResponse = await step.run('invoke-implementer', async () => {
+      return generateRoleResponse(
+        'Implementer',
+        `A new project "${projectName}" has just been kicked off. Sprint ${sprintNumber} (${sprintName}) is ready for implementation. Review the handoff document and begin work on the Sprint 1 backlog items. What are your first steps?`,
+        channel,
+        kickoffMessage?.ts
+      );
+    });
+
+    // Step 4: Post Implementer's response
+    await step.run('post-implementer-response', async () => {
+      return postAsRole('Implementer', channel, implementerResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: implementerResponse.response },
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 5: Notify if knowledge was captured
+    if (implementerResponse.knowledgeSaved) {
+      await step.run('notify-knowledge', async () => {
+        return postAsRole('Implementer', channel, 'Knowledge saved', [
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `📚 _Saved to knowledge base: "${implementerResponse.knowledgeSaved!.title}"_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
+    }
+
+    console.log(`[Kickoff] Project ${projectName} kickoff complete - Implementer invoked`);
+
+    return {
+      success: true,
+      projectId,
+      projectName,
+      implementerInvoked: true,
+      messageTs: kickoffMessage?.ts,
+    };
+  }
+);
+
+/**
+ * Handle sprint completion - notify team and trigger next steps
+ */
+const handleSprintCompleted = inngest.createFunction(
+  {
+    id: 'sprint-completed-handler',
+    name: 'Handle Sprint Completion',
+  },
+  { event: 'sprint/completed' },
+  async ({ event, step }) => {
+    const { projectId, projectName, sprintNumber, sprintName: _sprintName, nextSprintNumber } = event.data;
+    const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+
+    // Announce sprint completion
+    await step.run('announce-completion', async () => {
+      const hasNextSprint = nextSprintNumber !== null;
+      const message = hasNextSprint
+        ? `Sprint ${sprintNumber} complete! Moving to Sprint ${nextSprintNumber}.`
+        : `Sprint ${sprintNumber} complete! This was the final sprint for ${projectName}.`;
+
+      return postAsRole('PM', channel, message, [
+        {
+          type: 'header',
+          text: {
+            type: 'plain_text',
+            text: hasNextSprint ? '✅ Sprint Complete' : '🎉 Project Complete!',
+            emoji: true,
+          },
+        },
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: `*${projectName}*\n\n${message}` },
+        },
+      ]);
+    });
+
+    return { success: true, projectId, sprintNumber };
+  }
+);
+
+/**
+ * Handle project completion - final notification and archival
+ */
+const handleProjectCompleted = inngest.createFunction(
+  {
+    id: 'project-completed-handler',
+    name: 'Handle Project Completion',
+  },
+  { event: 'project/completed' },
+  async ({ event, step }) => {
+    const { projectId, projectName, clientName, totalSprints } = event.data;
+    const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+
+    // CTO announces project completion
+    await step.run('announce-completion', async () => {
+      return postAsRole('CTO', channel, `Project completed: ${projectName}`, [
+        {
+          type: 'header',
+          text: { type: 'plain_text', text: '🎉 Project Completed!', emoji: true },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*${projectName}* for *${clientName}* has been successfully completed!\n\n*Sprints delivered:* ${totalSprints}`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Ready for client delivery and knowledge consolidation_` },
+          ],
+        },
+      ]);
+    });
+
+    // Generate completion summary from PM
+    const summary = await step.run('generate-summary', async () => {
+      return generateRoleResponse(
+        'PM',
+        `Project "${projectName}" has just been completed after ${totalSprints} sprint(s). Provide a brief project completion summary including key deliverables and lessons learned.`
+      );
+    });
+
+    await step.run('post-summary', async () => {
+      return postAsRole('PM', channel, summary.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: `*Project Summary*\n\n${summary.response}` },
+        },
+      ]);
+    });
+
+    return { success: true, projectId, projectName };
+  }
+);
+
 // All functions to serve
 const functions = [
   testFunction,
@@ -1794,6 +2012,10 @@ const functions = [
   weeklyOpsReport,
   weeklyFinancialSummary,
   dailyProjectSummary,
+  // Project lifecycle
+  handleProjectKickoff,
+  handleSprintCompleted,
+  handleProjectCompleted,
 ];
 
 // Create and export the serve handler
