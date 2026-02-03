@@ -1,6 +1,6 @@
 import { notFound, redirect } from 'next/navigation';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { authOptions, canAccessProject } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
 import { PlanReview } from '@/components/features/plan-review';
 import { LogoutButton } from '@/components/features/logout-button';
@@ -28,7 +28,7 @@ export default async function ProjectReviewPage({ params }: PageProps) {
     notFound();
   }
 
-  if (project.ownerId !== session.user.id) {
+  if (!canAccessProject(project, session.user.id)) {
     notFound();
   }
 

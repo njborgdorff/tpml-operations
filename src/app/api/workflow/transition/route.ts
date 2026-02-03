@@ -1,5 +1,5 @@
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { authOptions, canAccessProject } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
 import { SprintStatus } from '@prisma/client';
 import path from 'path';
@@ -79,14 +79,14 @@ export async function POST(request: Request) {
     // Validate project ownership
     const project = await prisma.project.findUnique({
       where: { id: projectId },
-      select: { id: true, slug: true, ownerId: true, name: true },
+      select: { id: true, slug: true, ownerId: true, implementerId: true, name: true },
     });
 
     if (!project) {
       return notFound('Project');
     }
 
-    if (project.ownerId !== session.user.id) {
+    if (!canAccessProject(project, session.user.id)) {
       return forbidden();
     }
 

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { authOptions, canAccessProject } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
 
 /**
@@ -26,14 +26,14 @@ export async function GET(
 
     const project = await prisma.project.findUnique({
       where: { id },
-      select: { id: true, name: true, status: true, ownerId: true },
+      select: { id: true, name: true, status: true, ownerId: true, implementerId: true },
     });
 
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    if (project.ownerId !== session.user.id) {
+    if (!canAccessProject(project, session.user.id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

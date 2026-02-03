@@ -20,8 +20,9 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  projects      Project[]
-  sessions      Session[]
+  projects              Project[]
+  implementerProjects   Project[] @relation("ImplementerProjects")
+  sessions              Session[]
 
   @@map("users")
 }
@@ -88,12 +89,14 @@ model Project {
   // Relationships
   clientId       String
   ownerId        String
+  implementerId  String?  // Assigned implementer who can also view project documents
 
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   client         Client   @relation(fields: [clientId], references: [id])
   owner          User     @relation(fields: [ownerId], references: [id])
+  implementer    User?    @relation("ImplementerProjects", fields: [implementerId], references: [id])
   sprints        Sprint[]
   conversations  Conversation[]
   artifacts      Artifact[]

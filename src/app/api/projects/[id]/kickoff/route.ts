@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { authOptions, canAccessProject } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
 import { syncKnowledgeBase } from '@/lib/knowledge/sync';
 import { Inngest } from 'inngest';
@@ -40,7 +40,7 @@ export async function POST(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    if (project.ownerId !== session.user.id) {
+    if (!canAccessProject(project, session.user.id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -197,7 +197,7 @@ export async function GET(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    if (project.ownerId !== session.user.id) {
+    if (!canAccessProject(project, session.user.id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

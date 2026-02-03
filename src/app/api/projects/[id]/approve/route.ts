@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { authOptions, canAccessProject } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
 import { generateArtifacts } from '@/lib/artifacts/generator';
 import { createImplementationHandoff } from '@/lib/orchestration/claude-code';
@@ -33,7 +33,7 @@ export async function POST(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    if (project.ownerId !== session.user.id) {
+    if (!canAccessProject(project, session.user.id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

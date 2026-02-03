@@ -44,7 +44,10 @@ export default async function ProjectPage({ params }: PageProps) {
   const project = await prisma.project.findFirst({
     where: {
       slug,
-      ownerId: session.user.id,
+      OR: [
+        { ownerId: session.user.id },
+        { implementerId: session.user.id },
+      ],
     },
     include: {
       client: true,

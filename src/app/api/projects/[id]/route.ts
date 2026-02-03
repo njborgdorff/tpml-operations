@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { authOptions, canAccessProject } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
 import { syncKnowledgeBase } from '@/lib/knowledge/sync';
 import fs from 'fs/promises';
@@ -36,7 +36,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    if (project.ownerId !== session.user.id) {
+    if (!canAccessProject(project, session.user.id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -116,7 +116,7 @@ export async function GET(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    if (project.ownerId !== session.user.id) {
+    if (!canAccessProject(project, session.user.id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -125,6 +125,85 @@ export async function GET(
     console.error('Get project failed:', error);
     return NextResponse.json(
       { error: 'Failed to get project' },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * PATCH /api/projects/[id]
+ *
+ * Update project settings, including assigning an implementer.
+ * Only the project owner can assign an implementer.
+ */
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { id } = await params;
+    const body = await request.json();
+    const { implementerId } = body;
+
+    // Find the project
+    const project = await prisma.project.findUnique({
+      where: { id },
+    });
+
+    if (!project) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    }
+
+    // Only the owner can assign an implementer (not implementers themselves)
+    if (project.ownerId !== session.user.id) {
+      return NextResponse.json({ error: 'Only the project owner can assign an implementer' }, { status: 403 });
+    }
+
+    // If implementerId is provided, verify the user exists
+    if (implementerId) {
+      const implementer = await prisma.user.findUnique({
+        where: { id: implementerId },
+      });
+
+      if (!implementer) {
+        return NextResponse.json({ error: 'Implementer user not found' }, { status: 400 });
+      }
+    }
+
+    // Update the project
+    const updated = await prisma.project.update({
+      where: { id },
+      data: {
+        implementerId: implementerId || null,
+      },
+      include: {
+        implementer: {
+          select: { id: true, name: true, email: true },
+        },
+      },
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: implementerId
+        ? `Implementer assigned to project "${project.name}"`
+        : `Implementer removed from project "${project.name}"`,
+      project: {
+        id: updated.id,
+        name: updated.name,
+        implementerId: updated.implementerId,
+        implementer: updated.implementer,
+      },
+    });
+  } catch (error) {
+    console.error('Update project failed:', error);
+    return NextResponse.json(
+      { error: 'Failed to update project' },
       { status: 500 }
     );
   }

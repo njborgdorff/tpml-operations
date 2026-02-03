@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { authOptions, canAccessProject } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
 import { Inngest } from 'inngest';
 
@@ -52,7 +52,7 @@ export async function POST(
       return NextResponse.json({ error: 'Sprint not found' }, { status: 404 });
     }
 
-    if (sprint.project.ownerId !== session.user.id) {
+    if (!canAccessProject(sprint.project, session.user.id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -157,7 +157,7 @@ export async function GET(
       where: { id },
       include: {
         project: {
-          select: { id: true, name: true, ownerId: true },
+          select: { id: true, name: true, ownerId: true, implementerId: true },
         },
         reviews: {
           orderBy: { createdAt: 'desc' },
@@ -170,7 +170,7 @@ export async function GET(
       return NextResponse.json({ error: 'Sprint not found' }, { status: 404 });
     }
 
-    if (sprint.project.ownerId !== session.user.id) {
+    if (!canAccessProject(sprint.project, session.user.id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
