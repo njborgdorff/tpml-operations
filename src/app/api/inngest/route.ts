@@ -1919,9 +1919,11 @@ INSTRUCTIONS:
 1. Read the handoff document provided above (it's already in your context)
 2. Summarize the KEY POINTS from the document you received (prove you read it)
 3. List the Sprint 1 deliverables FROM the document
-4. Outline your implementation approach
+4. Outline your implementation approach and first steps
 
-DO NOT ask for documents. DO NOT say you need more information. The handoff document is ALREADY PROVIDED above. Reference specific details from it in your response.`;
+IMPORTANT: You are authorized to proceed. DO NOT ask for permission, confirmation, or approval to begin work. Human approval is only required at sprint review, not during implementation. Start working immediately based on the handoff document.
+
+DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "should I proceed?" - just proceed.`;
 
       return generateRoleResponse(
         'Implementer',
