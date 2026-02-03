@@ -1182,6 +1182,58 @@ async function getRecentKnowledge(limit: number = 5): Promise<string> {
 }
 
 /**
+ * Analyze a role's response to determine if they approved or found issues
+ * Returns { approved: boolean, issues?: string }
+ */
+async function analyzeRoleDecision(
+  role: 'Reviewer' | 'QA',
+  response: string
+): Promise<{ approved: boolean; issues?: string }> {
+  const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+
+  const prompt = role === 'Reviewer'
+    ? `Analyze this code review response. Did the reviewer APPROVE the code or REQUEST CHANGES?
+
+Response to analyze:
+${response}
+
+Reply with ONLY a JSON object (no markdown):
+{"approved": true} if approved
+{"approved": false, "issues": "brief summary of issues"} if changes requested`
+    : `Analyze this QA testing response. Did QA PASS the tests or find BUGS?
+
+Response to analyze:
+${response}
+
+Reply with ONLY a JSON object (no markdown):
+{"approved": true} if tests passed
+{"approved": false, "issues": "brief summary of bugs found"} if bugs found`;
+
+  try {
+    const result = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 200,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = result.content[0].type === 'text' ? result.content[0].text : '';
+    // Parse JSON from response, handling potential markdown code blocks
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+    // Default to approved if parsing fails (to avoid infinite loops)
+    console.warn(`[Decision] Could not parse ${role} decision, defaulting to approved`);
+    return { approved: true };
+  } catch (error) {
+    console.error(`[Decision] Error analyzing ${role} decision:`, error);
+    return { approved: true }; // Default to approved on error
+  }
+}
+
+/**
  * Generate intelligent response using Claude API
  *
  * @param options.skipKnowledge - If true, skips fetching knowledge base entries.
@@ -1960,89 +2012,166 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
     }
 
     // =========================================================================
-    // AUTOMATED ROLE-TO-ROLE WORKFLOW
+    // AUTOMATED ROLE-TO-ROLE WORKFLOW WITH FEEDBACK LOOPS
     // After Implementer outlines their plan, continue through Review and QA
+    // If issues are found, loop back to Implementer for fixes
     // Human approval only required at sprint completion
+    // Max 3 iterations to prevent infinite loops
     // =========================================================================
 
-    // Step 6: Implementer signals implementation complete, hands off to Reviewer
-    await step.run('implementer-handoff', async () => {
-      return postAsRole('Implementer', channel, 'Implementation complete, handing off to Reviewer', [
-        {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: `✅ *Implementation Complete*\n\nI've completed the Sprint ${sprintNumber} implementation. Handing off to Reviewer for code review.`,
+    const MAX_ITERATIONS = 3;
+    let currentImplementation = implementerResponse.response;
+    let iteration = 0;
+    let workflowComplete = false;
+
+    while (!workflowComplete && iteration < MAX_ITERATIONS) {
+      iteration++;
+      const iterSuffix = iteration > 1 ? `-iter${iteration}` : '';
+
+      // Step 6: Implementer signals implementation complete, hands off to Reviewer
+      await step.run(`implementer-handoff${iterSuffix}`, async () => {
+        const message = iteration === 1
+          ? `✅ *Implementation Complete*\n\nI've completed the Sprint ${sprintNumber} implementation. Handing off to Reviewer for code review.`
+          : `✅ *Fixes Complete (Iteration ${iteration})*\n\nI've addressed the feedback and completed the fixes. Handing off to Reviewer for re-review.`;
+
+        return postAsRole('Implementer', channel, 'Implementation complete, handing off to Reviewer', [
+          {
+            type: 'section',
+            text: { type: 'mrkdwn', text: message },
           },
-        },
-        {
-          type: 'context',
-          elements: [
-            { type: 'mrkdwn', text: `_Workflow: IMPLEMENTING → REVIEWING_` },
-          ],
-        },
-      ], kickoffMessage?.ts);
-    });
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Workflow: IMPLEMENTING → REVIEWING${iteration > 1 ? ` (iteration ${iteration})` : ''}_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
 
-    // Step 7: Invoke Reviewer to review the implementation
-    const reviewerResponse = await step.run('invoke-reviewer', async () => {
-      const reviewContext = `## Implementation Summary from Implementer
+      // Step 7: Invoke Reviewer to review the implementation
+      const reviewerResponse = await step.run(`invoke-reviewer${iterSuffix}`, async () => {
+        const reviewContext = `## Implementation Summary from Implementer${iteration > 1 ? ` (Iteration ${iteration})` : ''}
 
-${implementerResponse.response}
+${currentImplementation}
 
 ## Your Task
-Review the implementation plan and approach. Check for:
+Review the implementation. Check for:
 - Code quality and patterns
 - Security considerations
 - Error handling
 - Test coverage
-- Adherence to TPML standards`;
+- Adherence to TPML standards
 
-      return generateRoleResponse(
-        'Reviewer',
-        `The Implementer has completed Sprint ${sprintNumber} (${sprintName}) for "${projectName}". Review their implementation and provide your assessment. If everything looks good, approve to proceed to QA. If issues are found, document them.
+You MUST make a clear decision:
+- If implementation meets standards: State "APPROVED" clearly and explain why
+- If issues found: State "CHANGES REQUESTED" and list specific issues`;
 
-IMPORTANT: You are authorized to make decisions. Approve if the implementation meets standards, or document specific issues if not. DO NOT ask for permission - just provide your review decision.`,
-        channel,
-        kickoffMessage?.ts,
-        reviewContext,
-        { skipKnowledge: true, skipThreadHistory: true }
-      );
-    });
+        return generateRoleResponse(
+          'Reviewer',
+          `Review Sprint ${sprintNumber} implementation for "${projectName}".${iteration > 1 ? ` This is iteration ${iteration} after previous feedback.` : ''}
 
-    // Step 8: Post Reviewer's response
-    await step.run('post-reviewer-response', async () => {
-      return postAsRole('Reviewer', channel, reviewerResponse.response, [
-        {
-          type: 'section',
-          text: { type: 'mrkdwn', text: reviewerResponse.response },
-        },
-      ], kickoffMessage?.ts);
-    });
+Make a CLEAR DECISION: Either APPROVE to proceed to QA, or REQUEST CHANGES with specific issues listed.`,
+          channel,
+          kickoffMessage?.ts,
+          reviewContext,
+          { skipKnowledge: true, skipThreadHistory: true }
+        );
+      });
 
-    // Step 9: Reviewer hands off to QA
-    await step.run('reviewer-handoff', async () => {
-      return postAsRole('Reviewer', channel, 'Review complete, handing off to QA', [
-        {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: `✅ *Code Review Complete*\n\nReview passed. Handing off to QA for testing.`,
+      // Step 8: Post Reviewer's response
+      await step.run(`post-reviewer-response${iterSuffix}`, async () => {
+        return postAsRole('Reviewer', channel, reviewerResponse.response, [
+          {
+            type: 'section',
+            text: { type: 'mrkdwn', text: reviewerResponse.response },
           },
-        },
-        {
-          type: 'context',
-          elements: [
-            { type: 'mrkdwn', text: `_Workflow: REVIEWING → TESTING_` },
-          ],
-        },
-      ], kickoffMessage?.ts);
-    });
+        ], kickoffMessage?.ts);
+      });
 
-    // Step 10: Invoke QA to test
-    const qaResponse = await step.run('invoke-qa', async () => {
-      const qaContext = `## Implementation Summary
-${implementerResponse.response}
+      // Step 9: Analyze Reviewer's decision
+      const reviewDecision = await step.run(`analyze-review-decision${iterSuffix}`, async () => {
+        return analyzeRoleDecision('Reviewer', reviewerResponse.response);
+      });
+
+      if (!reviewDecision.approved) {
+        // Reviewer requested changes - loop back to Implementer
+        await step.run(`reviewer-requests-changes${iterSuffix}`, async () => {
+          return postAsRole('Reviewer', channel, 'Changes requested', [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: `⚠️ *Changes Requested*\n\n${reviewDecision.issues || 'Please address the issues mentioned above.'}\n\nSending back to Implementer for fixes.`,
+              },
+            },
+            {
+              type: 'context',
+              elements: [
+                { type: 'mrkdwn', text: `_Workflow: REVIEWING → IMPLEMENTING (iteration ${iteration})_` },
+              ],
+            },
+          ], kickoffMessage?.ts);
+        });
+
+        // Implementer addresses the feedback
+        const fixResponse = await step.run(`implementer-fix${iterSuffix}`, async () => {
+          const fixContext = `## Previous Implementation
+${currentImplementation}
+
+## Reviewer Feedback
+${reviewerResponse.response}
+
+## Issues to Address
+${reviewDecision.issues || 'See reviewer feedback above'}`;
+
+          return generateRoleResponse(
+            'Implementer',
+            `The Reviewer has requested changes for Sprint ${sprintNumber}. Address the feedback and provide your updated implementation approach.
+
+IMPORTANT: Fix the issues mentioned. DO NOT ask for clarification - just fix them and explain what you changed.`,
+            channel,
+            kickoffMessage?.ts,
+            fixContext,
+            { skipKnowledge: true, skipThreadHistory: true }
+          );
+        });
+
+        await step.run(`post-implementer-fix${iterSuffix}`, async () => {
+          return postAsRole('Implementer', channel, fixResponse.response, [
+            {
+              type: 'section',
+              text: { type: 'mrkdwn', text: fixResponse.response },
+            },
+          ], kickoffMessage?.ts);
+        });
+
+        currentImplementation = fixResponse.response;
+        continue; // Loop back to review
+      }
+
+      // Reviewer approved - proceed to QA
+      await step.run(`reviewer-approves${iterSuffix}`, async () => {
+        return postAsRole('Reviewer', channel, 'Review approved, handing off to QA', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `✅ *Code Review Approved*\n\nImplementation meets standards. Handing off to QA for testing.`,
+            },
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Workflow: REVIEWING → TESTING_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
+
+      // Step 10: Invoke QA to test
+      const qaResponse = await step.run(`invoke-qa${iterSuffix}`, async () => {
+        const qaContext = `## Implementation Summary
+${currentImplementation}
 
 ## Review Summary
 ${reviewerResponse.response}
@@ -2052,68 +2181,156 @@ Test the implementation against acceptance criteria. Verify:
 - All features work as specified
 - Edge cases are handled
 - No regressions introduced
-- Performance is acceptable`;
+- Performance is acceptable
 
-      return generateRoleResponse(
-        'QA',
-        `Sprint ${sprintNumber} (${sprintName}) for "${projectName}" has passed code review and is ready for QA testing. Test the implementation against the acceptance criteria and provide your assessment.
+You MUST make a clear decision:
+- If all tests pass: State "PASSED" or "QA APPROVED" clearly
+- If bugs found: State "BUGS FOUND" or "FAILED" and list specific issues`;
 
-IMPORTANT: You are authorized to make decisions. Pass if testing is successful, or document specific bugs if found. DO NOT ask for permission - just provide your QA decision.`,
-        channel,
-        kickoffMessage?.ts,
-        qaContext,
-        { skipKnowledge: true, skipThreadHistory: true }
-      );
-    });
+        return generateRoleResponse(
+          'QA',
+          `Sprint ${sprintNumber} for "${projectName}" has passed code review. Test the implementation.
 
-    // Step 11: Post QA's response
-    await step.run('post-qa-response', async () => {
-      return postAsRole('QA', channel, qaResponse.response, [
-        {
-          type: 'section',
-          text: { type: 'mrkdwn', text: qaResponse.response },
-        },
-      ], kickoffMessage?.ts);
-    });
+Make a CLEAR DECISION: Either PASS the tests, or document BUGS FOUND with specific issues.`,
+          channel,
+          kickoffMessage?.ts,
+          qaContext,
+          { skipKnowledge: true, skipThreadHistory: true }
+        );
+      });
 
-    // Step 12: QA passes, sprint ready for human approval
-    await step.run('qa-handoff', async () => {
-      return postAsRole('QA', channel, 'QA complete, requesting human approval', [
-        {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: `✅ *QA Testing Complete*\n\nAll tests passed. Sprint ${sprintNumber} is ready for human review and approval.`,
+      // Step 11: Post QA's response
+      await step.run(`post-qa-response${iterSuffix}`, async () => {
+        return postAsRole('QA', channel, qaResponse.response, [
+          {
+            type: 'section',
+            text: { type: 'mrkdwn', text: qaResponse.response },
           },
-        },
-        {
-          type: 'context',
-          elements: [
-            { type: 'mrkdwn', text: `_Workflow: TESTING → AWAITING_APPROVAL_` },
-          ],
-        },
-      ], kickoffMessage?.ts);
-    });
+        ], kickoffMessage?.ts);
+      });
 
-    // Step 13: Update sprint status to AWAITING_APPROVAL (human gate)
+      // Step 12: Analyze QA's decision
+      const qaDecision = await step.run(`analyze-qa-decision${iterSuffix}`, async () => {
+        return analyzeRoleDecision('QA', qaResponse.response);
+      });
+
+      if (!qaDecision.approved) {
+        // QA found bugs - loop back to Implementer
+        await step.run(`qa-finds-bugs${iterSuffix}`, async () => {
+          return postAsRole('QA', channel, 'Bugs found', [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: `🐛 *Bugs Found*\n\n${qaDecision.issues || 'Please fix the issues mentioned above.'}\n\nSending back to Implementer for fixes.`,
+              },
+            },
+            {
+              type: 'context',
+              elements: [
+                { type: 'mrkdwn', text: `_Workflow: TESTING → IMPLEMENTING (iteration ${iteration})_` },
+              ],
+            },
+          ], kickoffMessage?.ts);
+        });
+
+        // Implementer fixes the bugs
+        const bugfixResponse = await step.run(`implementer-bugfix${iterSuffix}`, async () => {
+          const bugfixContext = `## Current Implementation
+${currentImplementation}
+
+## QA Bug Report
+${qaResponse.response}
+
+## Bugs to Fix
+${qaDecision.issues || 'See QA report above'}`;
+
+          return generateRoleResponse(
+            'Implementer',
+            `QA found bugs in Sprint ${sprintNumber}. Fix the issues and provide your updated implementation.
+
+IMPORTANT: Fix ALL bugs mentioned. DO NOT ask questions - just fix them and explain what you changed.`,
+            channel,
+            kickoffMessage?.ts,
+            bugfixContext,
+            { skipKnowledge: true, skipThreadHistory: true }
+          );
+        });
+
+        await step.run(`post-implementer-bugfix${iterSuffix}`, async () => {
+          return postAsRole('Implementer', channel, bugfixResponse.response, [
+            {
+              type: 'section',
+              text: { type: 'mrkdwn', text: bugfixResponse.response },
+            },
+          ], kickoffMessage?.ts);
+        });
+
+        currentImplementation = bugfixResponse.response;
+        continue; // Loop back to review
+      }
+
+      // QA passed - workflow complete!
+      workflowComplete = true;
+
+      await step.run(`qa-passes${iterSuffix}`, async () => {
+        return postAsRole('QA', channel, 'QA passed, requesting human approval', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `✅ *QA Testing Passed*\n\nAll tests passed. Sprint ${sprintNumber} is ready for human review and approval.`,
+            },
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Workflow: TESTING → AWAITING_APPROVAL_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
+    }
+
+    // Check if we hit max iterations
+    if (!workflowComplete) {
+      await step.run('max-iterations-reached', async () => {
+        return postAsRole('PM', channel, 'Workflow needs human intervention', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `⚠️ *Human Intervention Required*\n\nSprint ${sprintNumber} workflow reached maximum iterations (${MAX_ITERATIONS}) without completing. Please review and intervene manually.`,
+            },
+          },
+        ], kickoffMessage?.ts);
+      });
+
+      return {
+        success: false,
+        projectId,
+        projectName,
+        error: 'Max iterations reached',
+        iterations: iteration,
+        messageTs: kickoffMessage?.ts,
+      };
+    }
+
+    // Update sprint status to AWAITING_APPROVAL (human gate)
     await step.run('update-sprint-status', async () => {
-      // Get the sprint
       const sprint = await prisma.sprint.findFirst({
-        where: {
-          projectId,
-          number: sprintNumber,
-        },
+        where: { projectId, number: sprintNumber },
       });
 
       if (sprint) {
         await prisma.sprint.update({
           where: { id: sprint.id },
-          data: { status: 'REVIEW' }, // REVIEW status triggers human approval UI
+          data: { status: 'REVIEW' },
         });
       }
     });
 
-    // Step 14: PM announces sprint ready for approval
+    // PM announces sprint ready for approval
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     await step.run('announce-ready-for-approval', async () => {
       const project = await prisma.project.findUnique({
@@ -2130,7 +2347,7 @@ IMPORTANT: You are authorized to make decisions. Pass if testing is successful, 
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) has completed the bot workflow:\n\n✅ Implementation complete\n✅ Code review passed\n✅ QA testing passed\n\n*Human approval is now required to proceed.*`,
+            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) has completed the bot workflow:\n\n✅ Implementation complete\n✅ Code review passed\n✅ QA testing passed${iteration > 1 ? `\n\n_Completed in ${iteration} iteration(s)_` : ''}\n\n*Human approval is now required to proceed.*`,
           },
         },
         {
@@ -2147,7 +2364,7 @@ IMPORTANT: You are authorized to make decisions. Pass if testing is successful, 
       ], kickoffMessage?.ts);
     });
 
-    console.log(`[Kickoff] Project ${projectName} full workflow complete - awaiting human approval`);
+    console.log(`[Kickoff] Project ${projectName} workflow complete in ${iteration} iteration(s) - awaiting human approval`);
 
     return {
       success: true,
@@ -2155,6 +2372,7 @@ IMPORTANT: You are authorized to make decisions. Pass if testing is successful, 
       projectName,
       workflowComplete: true,
       awaitingApproval: true,
+      iterations: iteration,
       messageTs: kickoffMessage?.ts,
     };
   }
