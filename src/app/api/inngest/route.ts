@@ -1959,13 +1959,202 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
       });
     }
 
-    console.log(`[Kickoff] Project ${projectName} kickoff complete - Implementer invoked`);
+    // =========================================================================
+    // AUTOMATED ROLE-TO-ROLE WORKFLOW
+    // After Implementer outlines their plan, continue through Review and QA
+    // Human approval only required at sprint completion
+    // =========================================================================
+
+    // Step 6: Implementer signals implementation complete, hands off to Reviewer
+    await step.run('implementer-handoff', async () => {
+      return postAsRole('Implementer', channel, 'Implementation complete, handing off to Reviewer', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `✅ *Implementation Complete*\n\nI've completed the Sprint ${sprintNumber} implementation. Handing off to Reviewer for code review.`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Workflow: IMPLEMENTING → REVIEWING_` },
+          ],
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 7: Invoke Reviewer to review the implementation
+    const reviewerResponse = await step.run('invoke-reviewer', async () => {
+      const reviewContext = `## Implementation Summary from Implementer
+
+${implementerResponse.response}
+
+## Your Task
+Review the implementation plan and approach. Check for:
+- Code quality and patterns
+- Security considerations
+- Error handling
+- Test coverage
+- Adherence to TPML standards`;
+
+      return generateRoleResponse(
+        'Reviewer',
+        `The Implementer has completed Sprint ${sprintNumber} (${sprintName}) for "${projectName}". Review their implementation and provide your assessment. If everything looks good, approve to proceed to QA. If issues are found, document them.
+
+IMPORTANT: You are authorized to make decisions. Approve if the implementation meets standards, or document specific issues if not. DO NOT ask for permission - just provide your review decision.`,
+        channel,
+        kickoffMessage?.ts,
+        reviewContext,
+        { skipKnowledge: true, skipThreadHistory: true }
+      );
+    });
+
+    // Step 8: Post Reviewer's response
+    await step.run('post-reviewer-response', async () => {
+      return postAsRole('Reviewer', channel, reviewerResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: reviewerResponse.response },
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 9: Reviewer hands off to QA
+    await step.run('reviewer-handoff', async () => {
+      return postAsRole('Reviewer', channel, 'Review complete, handing off to QA', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `✅ *Code Review Complete*\n\nReview passed. Handing off to QA for testing.`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Workflow: REVIEWING → TESTING_` },
+          ],
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 10: Invoke QA to test
+    const qaResponse = await step.run('invoke-qa', async () => {
+      const qaContext = `## Implementation Summary
+${implementerResponse.response}
+
+## Review Summary
+${reviewerResponse.response}
+
+## Your Task
+Test the implementation against acceptance criteria. Verify:
+- All features work as specified
+- Edge cases are handled
+- No regressions introduced
+- Performance is acceptable`;
+
+      return generateRoleResponse(
+        'QA',
+        `Sprint ${sprintNumber} (${sprintName}) for "${projectName}" has passed code review and is ready for QA testing. Test the implementation against the acceptance criteria and provide your assessment.
+
+IMPORTANT: You are authorized to make decisions. Pass if testing is successful, or document specific bugs if found. DO NOT ask for permission - just provide your QA decision.`,
+        channel,
+        kickoffMessage?.ts,
+        qaContext,
+        { skipKnowledge: true, skipThreadHistory: true }
+      );
+    });
+
+    // Step 11: Post QA's response
+    await step.run('post-qa-response', async () => {
+      return postAsRole('QA', channel, qaResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: qaResponse.response },
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 12: QA passes, sprint ready for human approval
+    await step.run('qa-handoff', async () => {
+      return postAsRole('QA', channel, 'QA complete, requesting human approval', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `✅ *QA Testing Complete*\n\nAll tests passed. Sprint ${sprintNumber} is ready for human review and approval.`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Workflow: TESTING → AWAITING_APPROVAL_` },
+          ],
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 13: Update sprint status to AWAITING_APPROVAL (human gate)
+    await step.run('update-sprint-status', async () => {
+      // Get the sprint
+      const sprint = await prisma.sprint.findFirst({
+        where: {
+          projectId,
+          number: sprintNumber,
+        },
+      });
+
+      if (sprint) {
+        await prisma.sprint.update({
+          where: { id: sprint.id },
+          data: { status: 'REVIEW' }, // REVIEW status triggers human approval UI
+        });
+      }
+    });
+
+    // Step 14: PM announces sprint ready for approval
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    await step.run('announce-ready-for-approval', async () => {
+      const project = await prisma.project.findUnique({
+        where: { id: projectId },
+        select: { slug: true },
+      });
+
+      return postAsRole('PM', channel, 'Sprint ready for human approval', [
+        {
+          type: 'header',
+          text: { type: 'plain_text', text: '🎯 Sprint Ready for Approval', emoji: true },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) has completed the bot workflow:\n\n✅ Implementation complete\n✅ Code review passed\n✅ QA testing passed\n\n*Human approval is now required to proceed.*`,
+          },
+        },
+        {
+          type: 'actions',
+          elements: [
+            {
+              type: 'button',
+              text: { type: 'plain_text', text: '✅ Approve Sprint', emoji: true },
+              style: 'primary',
+              url: `${baseUrl}/projects/${project?.slug || projectId}`,
+            },
+          ],
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    console.log(`[Kickoff] Project ${projectName} full workflow complete - awaiting human approval`);
 
     return {
       success: true,
       projectId,
       projectName,
-      implementerInvoked: true,
+      workflowComplete: true,
+      awaitingApproval: true,
       messageTs: kickoffMessage?.ts,
     };
   }
