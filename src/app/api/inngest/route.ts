@@ -1185,7 +1185,8 @@ async function getRecentKnowledge(limit: number = 5): Promise<string> {
  * Generate intelligent response using Claude API
  *
  * @param options.skipKnowledge - If true, skips fetching knowledge base entries.
- *   Use this during kickoff to prevent learned patterns from overriding explicit instructions.
+ * @param options.skipThreadHistory - If true, skips fetching Slack thread history.
+ *   Use both during kickoff to prevent learned patterns from overriding explicit instructions.
  */
 async function generateRoleResponse(
   role: AITeamRole,
@@ -1193,23 +1194,23 @@ async function generateRoleResponse(
   channelId?: string,
   threadTs?: string,
   additionalContext?: string,
-  options?: { skipKnowledge?: boolean }
+  options?: { skipKnowledge?: boolean; skipThreadHistory?: boolean }
 ): Promise<{ response: string; knowledgeSaved?: { id: string; title: string } }> {
   const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
   });
 
-  const { skipKnowledge = false } = options || {};
+  const { skipKnowledge = false, skipThreadHistory = false } = options || {};
 
   // Clean the message text (remove the @mention)
   const cleanedMessage = messageText.replace(/<@U[A-Z0-9]+>/gi, '').trim();
 
-  // Fetch context in parallel - optionally skip knowledge to prevent learned patterns from interfering
+  // Fetch context in parallel - optionally skip knowledge/thread to prevent learned patterns
   const [projectContext, knowledgeContext, recentKnowledge, threadHistory] = await Promise.all([
     getProjectContext(),
     skipKnowledge ? Promise.resolve('') : getKnowledgeContext(),
     skipKnowledge ? Promise.resolve('') : getRecentKnowledge(),
-    channelId && threadTs ? getThreadHistory(channelId, threadTs) : Promise.resolve([]),
+    (channelId && threadTs && !skipThreadHistory) ? getThreadHistory(channelId, threadTs) : Promise.resolve([]),
   ]);
 
   // Build enhanced system prompt with all context
@@ -1928,7 +1929,7 @@ DO NOT ask for documents. DO NOT say you need more information. The handoff docu
         channel,
         kickoffMessage?.ts,
         implementerContext,
-        { skipKnowledge: true } // Skip knowledge base to prevent learned patterns from overriding handoff
+        { skipKnowledge: true, skipThreadHistory: true } // Skip learned patterns from knowledge & thread history
       );
     });
 
