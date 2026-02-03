@@ -6,6 +6,7 @@ import { prisma } from '@/lib/db/prisma';
 import { SprintManager } from '@/components/features/sprint-manager';
 import { GeneratePlanButton } from '@/components/features/generate-plan-button';
 import { DeleteProjectButton } from '@/components/features/delete-project-button';
+import { ReinitiateButton } from '@/components/features/reinitiate-button';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -189,6 +190,25 @@ export default async function ProjectPage({ params }: PageProps) {
             </Button>
           </Link>
         </div>
+      )}
+
+      {/* Reinitiate Workflow for stalled projects */}
+      {(project.status === 'IN_PROGRESS' || project.status === 'ACTIVE') && (
+        <Card className="mt-6 border-orange-200 bg-orange-50">
+          <CardHeader>
+            <CardTitle>Workflow Not Started?</CardTitle>
+            <CardDescription>
+              If the AI team workflow didn&apos;t start after kickoff, you can reinitiate it here.
+              This will re-send the kickoff event without resetting any project data.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ReinitiateButton
+              projectId={project.id}
+              projectName={project.name}
+            />
+          </CardContent>
+        </Card>
       )}
 
       {/* Danger Zone - Delete Project */}
