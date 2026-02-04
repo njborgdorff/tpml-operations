@@ -12,9 +12,10 @@ import { serve } from 'inngest/next';
 import { Inngest } from 'inngest';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaClient } from '@prisma/client';
+import { runImplementation, applyOperationsViaGitHub, FileOperation } from '@/lib/implementation/file-tools';
 
-// Note: invokeClaudeCode uses child_process which doesn't work on Vercel serverless
-// CLI invocation happens via local worker or is triggered separately
+// Note: Implementation now uses Claude tool_use to generate actual file operations
+// These can be applied via GitHub API (serverless) or local worker
 
 // Create Inngest client
 const inngest = new Inngest({ id: 'tpml-code-team' });
@@ -2170,76 +2171,84 @@ Keep your response focused on architecture validation. Be concise but thorough.`
         ], kickoffMessage?.ts);
       });
 
-      // Generate implementation INLINE using Claude API
-      // This eliminates coordination issues between separate Inngest functions
+      // Generate implementation using Claude tool_use - actually creates file operations
       const implementationResult = await step.run(`generate-implementation${iterSuffix}`, async () => {
-        const iterationContext = iteration > 1 && currentImplementation
-          ? `\n\n## Previous Feedback to Address\n\n${currentImplementation}`
-          : '';
+        const previousFeedback = iteration > 1 ? currentImplementation : undefined;
 
-        const implementationPrompt = `You are the Implementer for TPML (Total Product Management, Ltd.).
+        // Use tool_use based implementation that generates actual file operations
+        const result = await runImplementation(
+          projectName,
+          sprintNumber,
+          sprintName || `Sprint ${sprintNumber}`,
+          handoffContent || 'No handoff document provided',
+          undefined, // existing files - could be fetched from GitHub
+          previousFeedback
+        );
 
-## Your Task
-Implement Sprint ${sprintNumber} (${sprintName}) for project "${projectName}" based on the handoff document below.
-
-## Handoff Document
-${handoffContent || 'No handoff document provided'}
-${iterationContext}
-
-## Instructions
-1. Analyze the requirements from the handoff
-2. Plan the implementation approach
-3. List specific files you would create/modify
-4. Provide code snippets for key implementations
-5. Document any assumptions or decisions made
-
-## Output Format
-Provide a structured implementation report:
-
-### Implementation Summary
-[Brief overview of what was implemented]
-
-### Files Modified/Created
-- List each file with a brief description
-
-### Key Code Changes
-\`\`\`typescript
-// Show important code snippets with explanations
-\`\`\`
-
-### Testing Notes
-[What tests were added/modified]
-
-### Next Steps
-[Any remaining work or handoff notes]
-
-Be specific and detailed. This output will be reviewed by the Reviewer role.`;
-
-        const anthropic = new Anthropic({
-          apiKey: process.env.ANTHROPIC_API_KEY,
-        });
-
-        const response = await anthropic.messages.create({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 4000,
-          messages: [{ role: 'user', content: implementationPrompt }],
-        });
-
-        const content = response.content[0];
-        const implementationText = content.type === 'text' ? content.text : 'Implementation generated';
-
-        // Parse files from the implementation text
-        const fileMatches = implementationText.match(/[-*]\s+`?([a-zA-Z0-9_\-./]+\.[a-zA-Z]+)`?/g) || [];
-        const filesFromOutput = fileMatches
-          .map(m => m.replace(/^[-*]\s+`?/, '').replace(/`?$/, ''))
-          .filter(f => f.includes('.'))
-          .slice(0, 20);
+        // Extract file paths from operations
+        const filesFromOperations = result.operations.map(op => op.path);
 
         return {
-          output: implementationText,
-          filesModified: filesFromOutput,
+          output: result.summary,
+          filesModified: filesFromOperations,
+          operations: result.operations,
+          success: result.success,
+          error: result.error,
         };
       });
+
+      // If we have file operations, commit them to GitHub
+      const githubRepo = process.env.GITHUB_REPO; // e.g., "owner/repo"
+      const targetRepo = (await prisma.project.findUnique({
+        where: { id: projectId },
+        select: { targetCodebase: true }
+      }))?.targetCodebase || githubRepo;
+
+      let commitResult: { success: boolean; commitSha?: string; error?: string } = { success: false };
+
+      if (implementationResult.operations && implementationResult.operations.length > 0 && targetRepo) {
+        commitResult = await step.run(`commit-to-github${iterSuffix}`, async () => {
+          const branchName = `sprint-${sprintNumber}-implementation`;
+          const commitMessage = `[Sprint ${sprintNumber}] ${sprintName || 'Implementation'} - Iteration ${iteration}
+
+Implemented by AI Implementer
+
+Files changed:
+${implementationResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`).join('\n')}`;
+
+          return applyOperationsViaGitHub(
+            implementationResult.operations,
+            targetRepo,
+            branchName,
+            commitMessage
+          );
+        });
+
+        // Post commit result
+        await step.run(`post-commit-result${iterSuffix}`, async () => {
+          if (commitResult.success) {
+            return postAsRole('Implementer', channel, 'Code committed to GitHub', [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: `✅ *Code Committed to GitHub*\n\nCommit: \`${commitResult.commitSha?.substring(0, 7)}\`\nBranch: \`sprint-${sprintNumber}-implementation\`\nFiles: ${implementationResult.operations.length}`,
+                },
+              },
+            ], kickoffMessage?.ts);
+          } else {
+            return postAsRole('Implementer', channel, 'GitHub commit failed', [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: `⚠️ *GitHub Commit Failed*\n\nError: ${commitResult.error}\n\nCode was generated but not committed. File operations stored in artifacts.`,
+                },
+              },
+            ], kickoffMessage?.ts);
+          }
+        });
+      }
 
       // Post implementation progress
       await step.run(`post-implementation-progress${iterSuffix}`, async () => {
@@ -2290,21 +2299,42 @@ Be specific and detailed. This output will be reviewed by the Reviewer role.`;
       const combinedFiles = allFilesModified.concat(filesModified);
       allFilesModified = combinedFiles.filter((file, index) => combinedFiles.indexOf(file) === index);
 
-      // Update currentImplementation with inline result
+      // Build file operations summary with actual code
+      const operations = implementationResult.operations || [];
+      const fileOperationsMarkdown = operations.length > 0
+        ? operations.map((op: FileOperation) => `### ${op.type.toUpperCase()}: \`${op.path}\`
+${op.description ? `_${op.description}_\n` : ''}
+\`\`\`typescript
+${op.content || '// No content'}
+\`\`\`
+`).join('\n')
+        : '_No file operations generated_';
+
+      // Update currentImplementation with actual code operations
       currentImplementation = `## Implementation Output
 
 ${implementationOutput}
 
-${filesModified.length > 0 ? `## Files Modified\n\n${filesModified.map((f: string) => `- ${f}`).join('\n')}` : ''}`;
+## Files Modified (${filesModified.length} files)
 
-      // Store implementation as artifact for human visibility
+${filesModified.map((f: string) => `- ${f}`).join('\n')}
+
+## Actual Code Generated
+
+${fileOperationsMarkdown}`;
+
+      // Store implementation as artifact with ACTUAL CODE for human visibility
       await step.run(`store-implementation-artifact${iterSuffix}`, async () => {
+        const commitInfo = commitResult.success
+          ? `\n**GitHub Commit:** \`${commitResult.commitSha}\`\n**Branch:** \`sprint-${sprintNumber}-implementation\``
+          : '\n**GitHub Commit:** _Not committed (see error above)_';
+
         const artifactContent = `# Sprint ${sprintNumber} Implementation - Iteration ${iteration}
 
 **Project:** ${projectName}
 **Sprint:** ${sprintName}
 **Date:** ${new Date().toISOString()}
-**Iteration:** ${iteration}
+**Iteration:** ${iteration}${commitInfo}
 
 ---
 
@@ -2314,7 +2344,13 @@ ${implementationOutput}
 
 ---
 
-## Files Modified (${filesModified.length} files)
+## File Operations (${operations.length} files)
+
+${fileOperationsMarkdown}
+
+---
+
+## Files Modified This Iteration
 
 ${filesModified.length > 0 ? filesModified.map(f => `- \`${f}\``).join('\n') : '_No files listed_'}
 
