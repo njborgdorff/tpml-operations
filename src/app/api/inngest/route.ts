@@ -2177,12 +2177,16 @@ Keep your response focused on architecture validation. Be concise but thorough.`
           data: {
             projectId,
             projectSlug,
+            projectName,
             projectPath,
             sprintNumber,
             sprintName,
             handoffContent,
             iteration,
             previousFeedback: iteration > 1 ? currentImplementation : null,
+            // Thread context for Slack continuity
+            channel,
+            threadTs: kickoffMessage?.ts,
           },
         });
         return { emitted: true };
@@ -3190,32 +3194,37 @@ const handleImplementationWork = inngest.createFunction(
     const {
       projectId,
       projectSlug,
+      projectName,
       projectPath: _projectPath, // Reserved for future CLI worker integration
       sprintNumber,
       sprintName,
       handoffContent,
       iteration,
       previousFeedback,
+      // Thread context from parent workflow
+      channel: eventChannel,
+      threadTs,
     } = event.data;
 
-    const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+    // Use channel from event or fall back to default
+    const channel = eventChannel || process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
 
     // Create Anthropic client for this handler
     const anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
 
-    // Step 1: Acknowledge receipt and post status
+    // Step 1: Acknowledge receipt and post status (in the same thread)
     await step.run('acknowledge-start', async () => {
       return postAsRole('Implementer', channel, 'Worker received implementation task', [
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `🔧 *Implementation Worker Started*\n\n*Project:* ${projectSlug || projectId}\n*Sprint:* ${sprintNumber} - ${sprintName}\n*Iteration:* ${iteration || 1}\n\n_Analyzing requirements and generating implementation..._`,
+            text: `🔧 *Implementation Worker Started*\n\n*Project:* ${projectName || projectSlug || projectId}\n*Sprint:* ${sprintNumber} - ${sprintName}\n*Iteration:* ${iteration || 1}\n\n_Analyzing requirements and generating implementation..._`,
           },
         },
-      ]);
+      ], threadTs);
     });
 
     // Step 2: Generate implementation using Claude API
@@ -3270,7 +3279,7 @@ Be specific and detailed. This output will be reviewed by the Reviewer role.`;
       return content.type === 'text' ? content.text : 'Implementation generated';
     });
 
-    // Step 3: Post progress update
+    // Step 3: Post progress update (in the same thread)
     await step.run('post-progress', async () => {
       const preview = implementation.substring(0, 500);
       return postAsRole('Implementer', channel, 'Implementation in progress', [
@@ -3287,7 +3296,7 @@ Be specific and detailed. This output will be reviewed by the Reviewer role.`;
             { type: 'mrkdwn', text: `_Full implementation: ${implementation.length} characters_` },
           ],
         },
-      ]);
+      ], threadTs);
     });
 
     // Step 4: Parse implementation to extract files modified
@@ -3318,7 +3327,7 @@ Be specific and detailed. This output will be reviewed by the Reviewer role.`;
       return { sent: true };
     });
 
-    // Step 6: Post completion status
+    // Step 6: Post completion status (in the same thread)
     await step.run('post-completion', async () => {
       return postAsRole('Implementer', channel, 'Implementation complete', [
         {
@@ -3328,7 +3337,7 @@ Be specific and detailed. This output will be reviewed by the Reviewer role.`;
             text: `✅ *Implementation Complete*\n\n*Sprint:* ${sprintNumber} - ${sprintName}\n*Files:* ${filesModified.length} identified\n\n_Handing off to Reviewer..._`,
           },
         },
-      ]);
+      ], threadTs);
     });
 
     return {
