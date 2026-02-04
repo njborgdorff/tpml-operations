@@ -2201,16 +2201,64 @@ Keep your response focused on architecture validation. Be concise but thorough.`
         ], kickoffMessage?.ts);
       });
 
+      // Wait for worker to complete implementation (with 30 minute timeout)
+      // The worker will send 'worker/implementation.complete' when done
+      const workerResult = await step.waitForEvent(`wait-for-worker${iterSuffix}`, {
+        event: 'worker/implementation.complete',
+        timeout: '30m',
+        match: 'data.projectId',
+      });
+
+      // Check if worker timed out or failed
+      if (!workerResult) {
+        await step.run(`worker-timeout${iterSuffix}`, async () => {
+          return postAsRole('Implementer', channel, 'Worker timeout', [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: `⚠️ *Implementation Timeout*\n\nThe worker did not complete within 30 minutes. Please check the worker status and retry.\n\n_Project: ${projectName}, Sprint ${sprintNumber}_`,
+              },
+            },
+          ], kickoffMessage?.ts);
+        });
+
+        return {
+          success: false,
+          projectId,
+          projectName,
+          error: 'Worker implementation timed out',
+        };
+      }
+
+      // Extract implementation result from worker
+      const implementationOutput = workerResult.data?.output || workerResult.data?.summary || 'Implementation completed (no details provided)';
+      const codeChanges = workerResult.data?.codeChanges || workerResult.data?.changes || '';
+      const filesModified = workerResult.data?.filesModified || [];
+
+      // Update currentImplementation with actual worker output
+      currentImplementation = `## Implementation Output
+
+${implementationOutput}
+
+${codeChanges ? `## Code Changes\n\n${codeChanges}` : ''}
+
+${filesModified.length > 0 ? `## Files Modified\n\n${filesModified.map((f: string) => `- ${f}`).join('\n')}` : ''}`;
+
       // Signal handoff to Reviewer
       await step.run(`implementer-handoff${iterSuffix}`, async () => {
         const message = iteration === 1
           ? `✅ *Implementation Complete*\n\nI've completed the Sprint ${sprintNumber} implementation. Handing off to Reviewer for code review.`
           : `✅ *Fixes Complete (Iteration ${iteration})*\n\nI've addressed the feedback and completed the fixes. Handing off to Reviewer for re-review.`;
 
+        const filesInfo = filesModified.length > 0
+          ? `\n\n*Files modified:* ${filesModified.length}`
+          : '';
+
         return postAsRole('Implementer', channel, 'Implementation complete, handing off to Reviewer', [
           {
             type: 'section',
-            text: { type: 'mrkdwn', text: message },
+            text: { type: 'mrkdwn', text: message + filesInfo },
           },
           {
             type: 'context',
@@ -2223,25 +2271,44 @@ Keep your response focused on architecture validation. Be concise but thorough.`
 
       // Step 7: Invoke Reviewer to review the implementation
       const reviewerResponse = await step.run(`invoke-reviewer${iterSuffix}`, async () => {
-        const reviewContext = `## Implementation Summary from Implementer${iteration > 1 ? ` (Iteration ${iteration})` : ''}
+        // Build comprehensive review context with documentation
+        const reviewContext = `## Project: ${projectName}
+## Sprint ${sprintNumber}: ${sprintName}
+## Client: ${clientName}
+
+---
+
+## Sprint Requirements (from Handoff Document)
+
+${handoffContent ? handoffContent.substring(0, 3000) : 'Handoff document not available'}
+
+---
+
+## Implementation Output${iteration > 1 ? ` (Iteration ${iteration})` : ''}
 
 ${currentImplementation}
 
-## Your Task
-Review the implementation. Check for:
-- Code quality and patterns
-- Security considerations
-- Error handling
-- Test coverage
-- Adherence to TPML standards
+---
+
+## Your Review Task
+
+Review the implementation against the sprint requirements above. Verify:
+- All sprint deliverables from the handoff are addressed
+- Code quality and patterns follow TPML standards
+- Security considerations are properly handled
+- Error handling is comprehensive
+- Test coverage is adequate
+- Implementation matches the architectural approach
 
 You MUST make a clear decision:
-- If implementation meets standards: State "APPROVED" clearly and explain why
-- If issues found: State "CHANGES REQUESTED" and list specific issues`;
+- If implementation meets ALL requirements: State "APPROVED" clearly and explain why
+- If issues found: State "CHANGES REQUESTED" and list specific issues with references to requirements`;
 
         return generateRoleResponse(
           'Reviewer',
           `Review Sprint ${sprintNumber} implementation for "${projectName}".${iteration > 1 ? ` This is iteration ${iteration} after previous feedback.` : ''}
+
+The sprint requirements are provided in the context above. Compare the implementation output against these requirements.
 
 Make a CLEAR DECISION: Either APPROVE to proceed to QA, or REQUEST CHANGES with specific issues listed.`,
           channel,
@@ -2343,26 +2410,48 @@ IMPORTANT: Fix the issues mentioned. DO NOT ask for clarification - just fix the
 
       // Step 10: Invoke QA to test
       const qaResponse = await step.run(`invoke-qa${iterSuffix}`, async () => {
-        const qaContext = `## Implementation Summary
+        const qaContext = `## Project: ${projectName}
+## Sprint ${sprintNumber}: ${sprintName}
+## Client: ${clientName}
+
+---
+
+## Sprint Requirements & Acceptance Criteria (from Handoff Document)
+
+${handoffContent ? handoffContent.substring(0, 2500) : 'Handoff document not available'}
+
+---
+
+## Implementation Summary
+
 ${currentImplementation}
 
-## Review Summary
+---
+
+## Code Review Summary
+
 ${reviewerResponse.response}
 
-## Your Task
-Test the implementation against acceptance criteria. Verify:
-- All features work as specified
-- Edge cases are handled
+---
+
+## Your QA Task
+
+Test the implementation against the acceptance criteria from the sprint requirements above. Verify:
+- All sprint deliverables are implemented and working
+- Features work as specified in the handoff
+- Edge cases and error conditions are handled
 - No regressions introduced
 - Performance is acceptable
 
 You MUST make a clear decision:
-- If all tests pass: State "PASSED" or "QA APPROVED" clearly
-- If bugs found: State "BUGS FOUND" or "FAILED" and list specific issues`;
+- If all acceptance criteria pass: State "PASSED" or "QA APPROVED" clearly
+- If bugs found: State "BUGS FOUND" or "FAILED" and list specific issues with references to requirements`;
 
         return generateRoleResponse(
           'QA',
-          `Sprint ${sprintNumber} for "${projectName}" has passed code review. Test the implementation.
+          `Sprint ${sprintNumber} for "${projectName}" has passed code review. Test the implementation against the acceptance criteria.
+
+The sprint requirements are provided in the context above. Verify each acceptance criterion is met.
 
 Make a CLEAR DECISION: Either PASS the tests, or document BUGS FOUND with specific issues.`,
           channel,
