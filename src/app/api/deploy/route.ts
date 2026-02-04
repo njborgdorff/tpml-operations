@@ -23,6 +23,9 @@ export async function POST(request: Request) {
 
     // Check for Vercel deploy hook first
     const vercelDeployHook = process.env.VERCEL_DEPLOY_HOOK;
+    const vercelProjectUrl = process.env.VERCEL_PROJECT_URL; // e.g., "https://vercel.com/team/project"
+    const vercelProductionUrl = process.env.NEXT_PUBLIC_APP_URL; // The production site URL
+
     if (vercelDeployHook) {
       // Trigger Vercel deployment
       const response = await fetch(vercelDeployHook, {
@@ -33,10 +36,27 @@ export async function POST(request: Request) {
         throw new Error(`Vercel deploy hook failed: ${response.status}`);
       }
 
+      // Try to parse response for deployment info
+      let deploymentInfo = null;
+      try {
+        deploymentInfo = await response.json();
+      } catch {
+        // Response may not be JSON
+      }
+
       return NextResponse.json({
         success: true,
         method: 'vercel',
-        message: 'Vercel deployment triggered',
+        message: 'Vercel deployment triggered - building now',
+        deploymentUrl: deploymentInfo?.url || null,
+        dashboardUrl: vercelProjectUrl || null,
+        productionUrl: vercelProductionUrl || null,
+        estimatedTime: '1-3 minutes',
+        tips: [
+          'Check the Vercel dashboard for build progress',
+          'Deployment typically takes 1-3 minutes',
+          'The production URL will update automatically when complete',
+        ],
       });
     }
 
@@ -75,6 +95,13 @@ export async function POST(request: Request) {
         method: 'github',
         message: `Branch ${branch} merged to master`,
         sha: mergeResult.sha,
+        dashboardUrl: `https://github.com/${githubRepo}/commits/master`,
+        productionUrl: process.env.NEXT_PUBLIC_APP_URL || null,
+        tips: [
+          'Changes have been merged to master',
+          'If CI/CD is configured, deployment will start automatically',
+          'Check your hosting provider for deployment status',
+        ],
       });
     }
 
