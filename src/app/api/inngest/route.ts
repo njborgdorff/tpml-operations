@@ -3168,6 +3168,179 @@ const handleSprintFeedback = inngest.createFunction(
   }
 );
 
+// ============================================================================
+// Worker Implementation Handler
+// ============================================================================
+
+/**
+ * Handle implementation work events
+ *
+ * This processes the worker/implementation.start event and performs
+ * the implementation using Claude API (since CLI can't run on Vercel).
+ *
+ * Sends worker/implementation.complete when done.
+ */
+const handleImplementationWork = inngest.createFunction(
+  {
+    id: 'handle-implementation-work',
+    name: 'Handle Implementation Work',
+  },
+  { event: 'worker/implementation.start' },
+  async ({ event, step }) => {
+    const {
+      projectId,
+      projectSlug,
+      projectPath: _projectPath, // Reserved for future CLI worker integration
+      sprintNumber,
+      sprintName,
+      handoffContent,
+      iteration,
+      previousFeedback,
+    } = event.data;
+
+    const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+
+    // Create Anthropic client for this handler
+    const anthropic = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    });
+
+    // Step 1: Acknowledge receipt and post status
+    await step.run('acknowledge-start', async () => {
+      return postAsRole('Implementer', channel, 'Worker received implementation task', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `🔧 *Implementation Worker Started*\n\n*Project:* ${projectSlug || projectId}\n*Sprint:* ${sprintNumber} - ${sprintName}\n*Iteration:* ${iteration || 1}\n\n_Analyzing requirements and generating implementation..._`,
+          },
+        },
+      ]);
+    });
+
+    // Step 2: Generate implementation using Claude API
+    const implementation = await step.run('generate-implementation', async () => {
+      const iterationContext = iteration > 1 && previousFeedback
+        ? `\n\n## Previous Feedback to Address\n\n${previousFeedback}`
+        : '';
+
+      const implementationPrompt = `You are the Implementer for TPML (Total Product Management, Ltd.).
+
+## Your Task
+Implement Sprint ${sprintNumber} (${sprintName}) based on the handoff document below.
+
+## Handoff Document
+${handoffContent || 'No handoff document provided'}
+${iterationContext}
+
+## Instructions
+1. Analyze the requirements from the handoff
+2. Plan the implementation approach
+3. List specific files you would create/modify
+4. Provide code snippets for key implementations
+5. Document any assumptions or decisions made
+
+## Output Format
+Provide a structured implementation report:
+
+### Implementation Summary
+[Brief overview of what was implemented]
+
+### Files Modified/Created
+- List each file with a brief description
+
+### Key Code Changes
+[Show important code snippets with explanations]
+
+### Testing Notes
+[What tests were added/modified]
+
+### Next Steps
+[Any remaining work or handoff notes]
+
+Be specific and detailed. This output will be reviewed by the Reviewer role.`;
+
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4000,
+        messages: [{ role: 'user', content: implementationPrompt }],
+      });
+
+      const content = response.content[0];
+      return content.type === 'text' ? content.text : 'Implementation generated';
+    });
+
+    // Step 3: Post progress update
+    await step.run('post-progress', async () => {
+      const preview = implementation.substring(0, 500);
+      return postAsRole('Implementer', channel, 'Implementation in progress', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `⚙️ *Implementation Progress*\n\n${preview}${implementation.length > 500 ? '...' : ''}`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Full implementation: ${implementation.length} characters_` },
+          ],
+        },
+      ]);
+    });
+
+    // Step 4: Parse implementation to extract files modified
+    const filesModified = await step.run('parse-files', async () => {
+      const fileMatches = implementation.match(/[-*]\s+`?([a-zA-Z0-9_\-./]+\.[a-zA-Z]+)`?/g) || [];
+      return fileMatches
+        .map(m => m.replace(/^[-*]\s+`?/, '').replace(/`?$/, ''))
+        .filter(f => f.includes('.'))
+        .slice(0, 20); // Limit to 20 files
+    });
+
+    // Step 5: Send completion event
+    await step.run('send-completion', async () => {
+      await inngest.send({
+        name: 'worker/implementation.complete',
+        data: {
+          projectId,
+          projectSlug,
+          sprintNumber,
+          iteration: iteration || 1,
+          output: implementation,
+          summary: implementation.substring(0, 1000),
+          codeChanges: implementation,
+          filesModified,
+          success: true,
+        },
+      });
+      return { sent: true };
+    });
+
+    // Step 6: Post completion status
+    await step.run('post-completion', async () => {
+      return postAsRole('Implementer', channel, 'Implementation complete', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `✅ *Implementation Complete*\n\n*Sprint:* ${sprintNumber} - ${sprintName}\n*Files:* ${filesModified.length} identified\n\n_Handing off to Reviewer..._`,
+          },
+        },
+      ]);
+    });
+
+    return {
+      success: true,
+      projectId,
+      sprintNumber,
+      filesModified,
+      outputLength: implementation.length,
+    };
+  }
+);
+
 // All functions to serve
 const functions = [
   testFunction,
@@ -3198,6 +3371,8 @@ const functions = [
   handleSprintRejected,
   handleProjectCompleted,
   handleSprintFeedback,
+  // Worker handlers
+  handleImplementationWork,
 ];
 
 // Create and export the serve handler
