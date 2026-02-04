@@ -2071,7 +2071,58 @@ Keep your response concise but ensure technical oversight is clear.`;
         {
           type: 'context',
           elements: [
-            { type: 'mrkdwn', text: `_CTO technical review complete - proceeding to implementation_` },
+            { type: 'mrkdwn', text: `_CTO technical review complete - handing off to Architect_` },
+          ],
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 8: Architect reviews technical approach
+    const architectResponse = await step.run('architect-review', async () => {
+      const architectContext = `## Project: ${projectName}
+## Sprint ${sprintNumber}: ${sprintName}
+
+## Implementer's Plan
+${implementerResponse.response}
+
+## CTO's Technical Review
+${ctoResponse.response}
+
+## Handoff Document Summary
+${handoffContent ? handoffContent.substring(0, 1500) : 'See handoff document'}`;
+
+      const architectPrompt = `The CTO has reviewed and approved the Implementer's plan for "${projectName}" Sprint ${sprintNumber}.
+
+As Architect, please:
+1. Validate the technical approach aligns with our architecture patterns
+2. Review data model and API design considerations
+3. Identify any scalability or performance concerns
+4. Confirm infrastructure requirements are clear
+5. Provide your architectural blessing to proceed
+
+Keep your response focused on architecture validation. Be concise but thorough.`;
+
+      return generateRoleResponse(
+        'Architect',
+        architectPrompt,
+        channel,
+        kickoffMessage?.ts,
+        architectContext,
+        { skipKnowledge: true }
+      );
+    });
+
+    // Step 9: Post Architect's response
+    await step.run('post-architect-response', async () => {
+      return postAsRole('Architect', channel, architectResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: architectResponse.response },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Architecture review complete - Implementer may proceed_` },
           ],
         },
       ], kickoffMessage?.ts);
@@ -2336,22 +2387,96 @@ IMPORTANT: Fix ALL bugs mentioned. DO NOT ask questions - just fix them and expl
         continue; // Loop back to review
       }
 
-      // QA passed - workflow complete!
-      workflowComplete = true;
-
+      // QA passed - notify and proceed to DevOps
       await step.run(`qa-passes${iterSuffix}`, async () => {
-        return postAsRole('QA', channel, 'QA passed, requesting human approval', [
+        return postAsRole('QA', channel, 'QA passed, handing off to DevOps', [
           {
             type: 'section',
             text: {
               type: 'mrkdwn',
-              text: `✅ *QA Testing Passed*\n\nAll tests passed. Sprint ${sprintNumber} is ready for human review and approval.`,
+              text: `✅ *QA Testing Passed*\n\nAll tests passed. Handing off to DevOps for deployment preparation.`,
             },
           },
           {
             type: 'context',
             elements: [
-              { type: 'mrkdwn', text: `_Workflow: TESTING → AWAITING_APPROVAL_` },
+              { type: 'mrkdwn', text: `_Workflow: TESTING → DEPLOYING_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
+
+      // DevOps prepares deployment
+      const devopsResponse = await step.run(`devops-deploy${iterSuffix}`, async () => {
+        const devopsContext = `## Project: ${projectName}
+## Sprint ${sprintNumber}: ${sprintName}
+
+## Implementation Summary
+${currentImplementation}
+
+## QA Results
+${qaResponse.response}
+
+## Review Summary
+${reviewerResponse.response}`;
+
+        const devopsPrompt = `Sprint ${sprintNumber} for "${projectName}" has passed QA testing and is ready for deployment.
+
+As DevOps, please:
+1. Confirm deployment readiness and environment requirements
+2. Outline the deployment steps you'll take
+3. Note any infrastructure considerations
+4. Identify monitoring/alerting to set up
+5. Confirm rollback plan if needed
+
+Keep your response focused on deployment preparation. Be concise but thorough.`;
+
+        return generateRoleResponse(
+          'DevOps',
+          devopsPrompt,
+          channel,
+          kickoffMessage?.ts,
+          devopsContext,
+          { skipKnowledge: true }
+        );
+      });
+
+      // Post DevOps response
+      await step.run(`post-devops-response${iterSuffix}`, async () => {
+        return postAsRole('DevOps', channel, devopsResponse.response, [
+          {
+            type: 'section',
+            text: { type: 'mrkdwn', text: devopsResponse.response },
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Deployment preparation complete_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
+
+      // Workflow complete - request human approval
+      workflowComplete = true;
+
+      await step.run(`request-human-approval${iterSuffix}`, async () => {
+        return postAsRole('PM', channel, 'Sprint ready for human approval', [
+          {
+            type: 'header',
+            text: { type: 'plain_text', text: '🎯 Sprint Ready for Review', emoji: true },
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*Sprint ${sprintNumber}* for *${projectName}* has completed the full workflow:\n\n✅ CTO Review\n✅ Architecture Review\n✅ Implementation\n✅ Code Review\n✅ QA Testing\n✅ Deployment Prep\n\n*Human approval required to mark sprint complete.*`,
+            },
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Workflow: DEPLOYING → AWAITING_APPROVAL_` },
             ],
           },
         ], kickoffMessage?.ts);
