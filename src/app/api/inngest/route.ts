@@ -2137,13 +2137,14 @@ Keep your response focused on architecture validation. Be concise but thorough.`
     // After Implementer outlines their plan, continue through Review and QA
     // If issues are found, loop back to Implementer for fixes
     // Human approval only required at sprint completion
-    // Max 3 iterations to prevent infinite loops
+    // Max 10 iterations to allow for feedback cycles while preventing infinite loops
     // =========================================================================
 
-    const MAX_ITERATIONS = 3;
+    const MAX_ITERATIONS = 10;
     let currentImplementation = implementerResponse.response;
     let iteration = 0;
     let workflowComplete = false;
+    let allFilesModified: string[] = []; // Track all files across iterations
 
     while (!workflowComplete && iteration < MAX_ITERATIONS) {
       iteration++;
@@ -2238,7 +2239,11 @@ Keep your response focused on architecture validation. Be concise but thorough.`
       // Extract implementation result from worker
       const implementationOutput = workerResult.data?.output || workerResult.data?.summary || 'Implementation completed (no details provided)';
       const codeChanges = workerResult.data?.codeChanges || workerResult.data?.changes || '';
-      const filesModified = workerResult.data?.filesModified || [];
+      const filesModified: string[] = workerResult.data?.filesModified || [];
+
+      // Accumulate files modified across all iterations (deduplicated)
+      const combinedFiles = allFilesModified.concat(filesModified);
+      allFilesModified = combinedFiles.filter((file, index) => combinedFiles.indexOf(file) === index);
 
       // Update currentImplementation with actual worker output
       currentImplementation = `## Implementation Output
@@ -2248,6 +2253,62 @@ ${implementationOutput}
 ${codeChanges ? `## Code Changes\n\n${codeChanges}` : ''}
 
 ${filesModified.length > 0 ? `## Files Modified\n\n${filesModified.map((f: string) => `- ${f}`).join('\n')}` : ''}`;
+
+      // Store implementation as artifact for human visibility
+      await step.run(`store-implementation-artifact${iterSuffix}`, async () => {
+        const artifactContent = `# Sprint ${sprintNumber} Implementation - Iteration ${iteration}
+
+**Project:** ${projectName}
+**Sprint:** ${sprintName}
+**Date:** ${new Date().toISOString()}
+**Iteration:** ${iteration}
+
+---
+
+## Implementation Summary
+
+${implementationOutput}
+
+---
+
+## Files Modified (${filesModified.length} files)
+
+${filesModified.length > 0 ? filesModified.map(f => `- \`${f}\``).join('\n') : '_No files listed_'}
+
+---
+
+## Code Changes
+
+${codeChanges || '_See implementation summary above_'}
+
+---
+
+## Cumulative Files (All Iterations: ${allFilesModified.length} files)
+
+${allFilesModified.length > 0 ? allFilesModified.map(f => `- \`${f}\``).join('\n') : '_No files listed_'}
+`;
+
+        // Store as SPRINT_STATUS artifact (or create new version if exists)
+        const existingArtifact = await prisma.artifact.findFirst({
+          where: {
+            projectId,
+            type: 'SPRINT_STATUS',
+          },
+          orderBy: { version: 'desc' },
+        });
+
+        await prisma.artifact.create({
+          data: {
+            projectId,
+            type: 'SPRINT_STATUS',
+            name: `Sprint_${sprintNumber}_Implementation_Iter${iteration}.md`,
+            content: artifactContent,
+            version: (existingArtifact?.version || 0) + 1,
+          },
+        });
+
+        return { stored: true, iteration, filesCount: filesModified.length };
+      });
 
       // Signal handoff to Reviewer
       await step.run(`implementer-handoff${iterSuffix}`, async () => {
@@ -2670,13 +2731,18 @@ Keep your response focused on deployment preparation. Be concise but thorough.`;
       }
     });
 
-    // PM announces sprint ready for approval
+    // PM announces sprint ready for approval with files summary
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     await step.run('announce-ready-for-approval', async () => {
       const project = await prisma.project.findUnique({
         where: { id: projectId },
         select: { slug: true },
       });
+
+      // Build files summary for human review
+      const filesSummary = allFilesModified.length > 0
+        ? `\n\n📁 *Files Modified (${allFilesModified.length}):*\n${allFilesModified.slice(0, 10).map(f => `• \`${f}\``).join('\n')}${allFilesModified.length > 10 ? `\n_...and ${allFilesModified.length - 10} more_` : ''}`
+        : '';
 
       return postAsRole('PM', channel, 'Sprint ready for human approval', [
         {
@@ -2687,12 +2753,24 @@ Keep your response focused on deployment preparation. Be concise but thorough.`;
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) has completed the bot workflow:\n\n✅ Implementation complete\n✅ Code review passed\n✅ QA testing passed${iteration > 1 ? `\n\n_Completed in ${iteration} iteration(s)_` : ''}\n\n*Human approval is now required to proceed.*`,
+            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) has completed the bot workflow:\n\n✅ Implementation complete\n✅ Code review passed\n✅ QA testing passed${iteration > 1 ? `\n\n_Completed in ${iteration} iteration(s)_` : ''}${filesSummary}\n\n*Human approval is now required to proceed.*`,
+          },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `📋 *View full implementation details in the dashboard* - all changes have been stored as artifacts for your review.`,
           },
         },
         {
           type: 'actions',
           elements: [
+            {
+              type: 'button',
+              text: { type: 'plain_text', text: '📄 View Implementation', emoji: true },
+              url: `${baseUrl}/projects/${project?.slug || projectId}?tab=artifacts`,
+            },
             {
               type: 'button',
               text: { type: 'plain_text', text: '✅ Approve Sprint', emoji: true },
