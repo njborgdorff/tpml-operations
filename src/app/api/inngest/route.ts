@@ -12,6 +12,18 @@ import { serve } from 'inngest/next';
 import { Inngest } from 'inngest';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaClient } from '@prisma/client';
+// Worker now handles Claude Code CLI - these are no longer used directly
+// import { invokeClaudeCode, buildRolePrompt } from '@/lib/orchestration/claude-code';
+
+// Retry configuration for resilient autonomous workflows
+const WORKFLOW_RETRY_CONFIG = {
+  retries: 3 as const,
+  backoff: {
+    type: 'exponential' as const,
+    minDelay: 2000,  // 2 seconds
+    maxDelay: 30000, // 30 seconds
+  },
+};
 
 // Create Inngest client
 const inngest = new Inngest({ id: 'tpml-code-team' });
@@ -24,7 +36,7 @@ const prisma = new PrismaClient();
 // ============================================================================
 
 // Code team roles
-type CodeTeamRole = 'PM' | 'Architect' | 'Implementer' | 'Reviewer' | 'QA' | 'Tester' | 'DevOps';
+type CodeTeamRole = 'PM' | 'Architect' | 'Implementer' | 'Developer' | 'Reviewer' | 'QA' | 'Tester' | 'DevOps';
 
 // Executive roles
 type ExecutiveRole = 'CTO' | 'CMO' | 'COO' | 'CFO';
@@ -38,6 +50,7 @@ function getRoleToken(role: AITeamRole): string {
     PM: process.env.SLACK_BOT_TOKEN_PM,
     Architect: process.env.SLACK_BOT_TOKEN_ARCHITECT,
     Implementer: process.env.SLACK_BOT_TOKEN_IMPLEMENTER,
+    Developer: process.env.SLACK_BOT_TOKEN_DEVELOPER,
     Reviewer: process.env.SLACK_BOT_TOKEN_REVIEWER,
     QA: process.env.SLACK_BOT_TOKEN_QA,
     Tester: process.env.SLACK_BOT_TOKEN_TESTER,
@@ -638,6 +651,7 @@ function getUserIdToRoleMap(): Record<string, AITeamRole> {
     [process.env.SLACK_BOT_USER_ID_PM || 'U0ACF8WDXM1']: 'PM',
     [process.env.SLACK_BOT_USER_ID_ARCHITECT || 'U0ACF97BPU3']: 'Architect',
     [process.env.SLACK_BOT_USER_ID_IMPLEMENTER || 'U0AD0JNMNCR']: 'Implementer',
+    [process.env.SLACK_BOT_USER_ID_DEVELOPER || 'U0DEVELOPER']: 'Developer',
     [process.env.SLACK_BOT_USER_ID_REVIEWER || 'U0AD0JQRX9P']: 'Reviewer',
     [process.env.SLACK_BOT_USER_ID_QA || 'U0ACKL20N7Q']: 'QA',
     [process.env.SLACK_BOT_USER_ID_TESTER || 'U0AD0KBMXUZ']: 'Tester',
@@ -746,7 +760,39 @@ When a handoff document or project documentation appears in your context (especi
 
 Standards: TypeScript strict mode, Server Components default, co-located tests, Zod validation, conventional commits.
 
-Communication style: Be practical and code-focused. When given documentation, summarize what you received and proceed with implementation planning.`,
+Communication style: Be practical and code-focused. When given documentation, summarize what you received and proceed with implementation planning. Hand off to Developer for actual coding.`,
+
+    Developer: `You are the Developer for TPML (Total Product Management, Ltd.), an AI-staffed organization.
+
+Your role is to write actual production code using Claude Code CLI. You receive implementation plans from the Implementer and translate them into working code.
+
+**You DO:**
+- Write production code following the Implementer's plan
+- Implement features according to specifications
+- Fix bugs identified by Reviewer or QA
+- Write unit tests alongside your code
+- Follow coding standards and patterns from the codebase
+- Create meaningful git commits as you work
+- Use Claude Code CLI to make actual file changes
+
+**You DO NOT:**
+- Plan or design architecture (that's Implementer/Architect)
+- Review code (that's Reviewer)
+- Write e2e tests (that's Tester)
+- Modify CI/CD (that's DevOps)
+- Ask for clarification - just implement based on the plan provided
+
+**CRITICAL - Autonomous Coding:**
+When you receive a handoff from the Implementer:
+1. Read the existing codebase to understand patterns
+2. Implement the features as specified
+3. Write tests for your changes
+4. Commit your work with clear messages
+5. Hand off to Reviewer when complete
+
+Standards: TypeScript strict mode, Server Components default, co-located tests, Zod validation, conventional commits.
+
+Communication style: Be code-focused and action-oriented. Show what you built, not what you plan to build.`,
 
     Reviewer: `You are the Reviewer for TPML (Total Product Management, Ltd.), an AI-staffed organization.
 
@@ -1145,6 +1191,65 @@ async function saveKnowledgeEntry(
     return { id: entry.id };
   } catch (error) {
     console.error('[Knowledge] Error saving entry:', error);
+    return null;
+  }
+}
+
+/**
+ * Capture learnings from iteration cycles
+ * This stores what was found wrong, what was fixed, and the outcome
+ */
+async function captureIterationLearning(params: {
+  projectId: string;
+  projectName: string;
+  sprintNumber: number;
+  iteration: number;
+  sourceRole: 'Reviewer' | 'QA';
+  issuesFound: string;
+  fixApplied: string;
+  codeOutput?: string;
+  outcome: 'approved' | 'needs_more_work';
+}): Promise<{ id: string } | null> {
+  const { projectId, projectName, sprintNumber, iteration, sourceRole, issuesFound, fixApplied, codeOutput, outcome } = params;
+
+  const title = `${sourceRole} Feedback - ${projectName} Sprint ${sprintNumber} (Iter ${iteration})`;
+  const content = `## Issue Identified by ${sourceRole}
+${issuesFound}
+
+## Fix Applied by Implementer
+${fixApplied}
+
+${codeOutput ? `## Code Changes Summary
+\`\`\`
+${codeOutput.substring(0, 1000)}${codeOutput.length > 1000 ? '...' : ''}
+\`\`\`
+
+` : ''}## Outcome
+${outcome === 'approved' ? '✅ Fix was approved' : '⚠️ Additional work needed'}
+
+## Learnings
+- Issue type: ${sourceRole === 'Reviewer' ? 'Code quality/review finding' : 'Bug/test failure'}
+- Resolution: ${outcome === 'approved' ? 'Successfully addressed' : 'Required further iteration'}
+- Sprint: ${sprintNumber}, Iteration: ${iteration}`;
+
+  try {
+    const entry = await prisma.knowledgeEntry.create({
+      data: {
+        category: 'LESSON_LEARNED',
+        title,
+        content,
+        tags: [sourceRole.toLowerCase(), 'iteration', `sprint-${sprintNumber}`, outcome],
+        sourceRole: 'Implementer',
+        sourceType: 'iteration_learning',
+        projectId,
+        verified: false,
+      },
+    });
+
+    console.log(`[Knowledge] Captured iteration learning: ${entry.title} (${entry.id})`);
+    return { id: entry.id };
+  } catch (error) {
+    console.error('[Knowledge] Error capturing iteration learning:', error);
     return null;
   }
 }
@@ -1846,24 +1951,26 @@ const dailyProjectSummary = inngest.createFunction(
 // ============================================================================
 
 /**
- * Handle project kickoff - notify team and invoke Implementer
+ * Handle project kickoff - notify team and invoke Implementer with Claude Code CLI
  */
 const handleProjectKickoff = inngest.createFunction(
   {
     id: 'project-kickoff-handler',
     name: 'Handle Project Kickoff',
+    ...WORKFLOW_RETRY_CONFIG,
   },
   { event: 'project/kicked_off' },
   async ({ event, step }) => {
     const {
       projectId,
       projectName,
-      projectSlug: _projectSlug,
+      projectSlug,
       clientName,
       sprintId: _sprintId,
       sprintNumber,
       sprintName,
       handoffContent,
+      projectPath,
     } = event.data;
 
     const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
@@ -2012,15 +2119,146 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
     }
 
     // =========================================================================
+    // HANDOFF TO DEVELOPER FOR ACTUAL CODING
+    // Implementer plans, Developer writes code using Claude Code CLI
+    // =========================================================================
+
+    // Determine project path - worker uses /root/projects/{slug} on Droplet
+    const _effectiveProjectPath = projectPath || `C:\\tpml-ai-team\\projects\\${projectSlug}`;
+
+    // Step 5b: Implementer hands off to Developer
+    await step.run('implementer-to-developer-handoff', async () => {
+      return postAsRole('Implementer', channel, 'Handing off to Developer for implementation', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `📋 *Handoff: Implementer → Developer*\n\nI've outlined the implementation plan above. Handing off to Developer to write the actual code.`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Workflow: PLANNING → CODING_` },
+          ],
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 5c: Developer acknowledges and starts coding
+    const developerResponse = await step.run('developer-acknowledges', async () => {
+      return generateRoleResponse(
+        'Developer',
+        `You've received the implementation plan from the Implementer. Acknowledge the handoff and confirm you're starting to code.
+
+Implementation Plan:
+${implementerResponse.response}
+
+Briefly confirm what you'll be implementing, then proceed with coding.`,
+        channel,
+        kickoffMessage?.ts,
+        undefined,
+        { skipKnowledge: false, skipThreadHistory: true }
+      );
+    });
+
+    await step.run('post-developer-acknowledgment', async () => {
+      return postAsRole('Developer', channel, developerResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: developerResponse.response },
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 5d: Developer invokes Claude Code CLI via worker service
+    await step.run('developer-notify-starting', async () => {
+      return postAsRole('Developer', channel, 'Starting autonomous implementation...', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `🛠️ *Starting Autonomous Coding*\n\nSending implementation request to worker service for Sprint ${sprintNumber}...\n\n_Project: \`${projectSlug}\`_`,
+          },
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Send implementation request to worker
+    await step.run('send-to-worker', async () => {
+      await inngest.send({
+        name: 'worker/implementation.start',
+        data: {
+          projectId,
+          projectSlug,
+          projectPath: `/root/projects/${projectSlug}`,
+          sprintNumber,
+          sprintName: `Sprint ${sprintNumber}`,
+          handoffContent: `## Implementer's Plan\n${implementerResponse.response}\n\n## Original Handoff\n${handoffContent}`,
+          backlogContent: '',
+          architectureContent: '',
+        },
+      });
+    });
+
+    // Wait for worker to complete implementation (timeout: 15 minutes)
+    const workerResult = await step.waitForEvent('wait-for-implementation', {
+      event: 'worker/implementation.complete',
+      match: 'data.projectId',
+      timeout: '15m',
+    });
+
+    // Process worker result
+    const codeResult = {
+      success: workerResult?.data?.success ?? false,
+      output: workerResult?.data?.summary ?? '',
+      duration: workerResult?.data?.duration ?? 0,
+      error: workerResult?.data?.error,
+      filesChanged: workerResult?.data?.filesChanged ?? [],
+    };
+
+    // Post Claude Code results
+    await step.run('post-code-result', async () => {
+      if (codeResult.success) {
+        const summary = codeResult.output.length > 1500
+          ? codeResult.output.substring(codeResult.output.length - 1500)
+          : codeResult.output;
+
+        return postAsRole('Developer', channel, 'Implementation completed', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `✅ *Claude Code CLI Implementation Complete*\n\n_Duration: ${Math.round(codeResult.duration / 1000)}s_\n\n\`\`\`${summary.substring(0, 2000)}\`\`\``,
+            },
+          },
+        ], kickoffMessage?.ts);
+      } else {
+        return postAsRole('Developer', channel, 'Implementation encountered issues', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `⚠️ *Claude Code CLI Encountered Issues*\n\n${codeResult.error || 'Unknown error'}\n\n_Will proceed with review cycle to identify and fix issues._`,
+            },
+          },
+        ], kickoffMessage?.ts);
+      }
+    });
+
+    // =========================================================================
     // AUTOMATED ROLE-TO-ROLE WORKFLOW WITH FEEDBACK LOOPS
     // After Implementer outlines their plan, continue through Review and QA
     // If issues are found, loop back to Implementer for fixes
     // Human approval only required at sprint completion
-    // Max 3 iterations to prevent infinite loops
+    // Max iterations to prevent infinite loops (increased for testing convergence)
     // =========================================================================
 
-    const MAX_ITERATIONS = 3;
-    let currentImplementation = implementerResponse.response;
+    const MAX_ITERATIONS = 10; // Increased from 3 for testing
+    // Include Claude Code output in the implementation context for review
+    let currentImplementation = codeResult.success
+      ? `${implementerResponse.response}\n\n## Claude Code Implementation Output\n\n${codeResult.output}`
+      : implementerResponse.response;
     let iteration = 0;
     let workflowComplete = false;
 
@@ -2028,13 +2266,13 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
       iteration++;
       const iterSuffix = iteration > 1 ? `-iter${iteration}` : '';
 
-      // Step 6: Implementer signals implementation complete, hands off to Reviewer
-      await step.run(`implementer-handoff${iterSuffix}`, async () => {
+      // Step 6: Developer signals implementation complete, hands off to Reviewer
+      await step.run(`developer-handoff${iterSuffix}`, async () => {
         const message = iteration === 1
           ? `✅ *Implementation Complete*\n\nI've completed the Sprint ${sprintNumber} implementation. Handing off to Reviewer for code review.`
           : `✅ *Fixes Complete (Iteration ${iteration})*\n\nI've addressed the feedback and completed the fixes. Handing off to Reviewer for re-review.`;
 
-        return postAsRole('Implementer', channel, 'Implementation complete, handing off to Reviewer', [
+        return postAsRole('Developer', channel, 'Implementation complete, handing off to Reviewer', [
           {
             type: 'section',
             text: { type: 'mrkdwn', text: message },
@@ -2042,7 +2280,7 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
           {
             type: 'context',
             elements: [
-              { type: 'mrkdwn', text: `_Workflow: IMPLEMENTING → REVIEWING${iteration > 1 ? ` (iteration ${iteration})` : ''}_` },
+              { type: 'mrkdwn', text: `_Workflow: CODING → REVIEWING${iteration > 1 ? ` (iteration ${iteration})` : ''}_` },
             ],
           },
         ], kickoffMessage?.ts);
@@ -2050,7 +2288,7 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
 
       // Step 7: Invoke Reviewer to review the implementation
       const reviewerResponse = await step.run(`invoke-reviewer${iterSuffix}`, async () => {
-        const reviewContext = `## Implementation Summary from Implementer${iteration > 1 ? ` (Iteration ${iteration})` : ''}
+        const reviewContext = `## Implementation Summary from Developer${iteration > 1 ? ` (Iteration ${iteration})` : ''}
 
 ${currentImplementation}
 
@@ -2094,27 +2332,27 @@ Make a CLEAR DECISION: Either APPROVE to proceed to QA, or REQUEST CHANGES with 
       });
 
       if (!reviewDecision.approved) {
-        // Reviewer requested changes - loop back to Implementer
+        // Reviewer requested changes - loop back to Developer
         await step.run(`reviewer-requests-changes${iterSuffix}`, async () => {
           return postAsRole('Reviewer', channel, 'Changes requested', [
             {
               type: 'section',
               text: {
                 type: 'mrkdwn',
-                text: `⚠️ *Changes Requested*\n\n${reviewDecision.issues || 'Please address the issues mentioned above.'}\n\nSending back to Implementer for fixes.`,
+                text: `⚠️ *Changes Requested*\n\n${reviewDecision.issues || 'Please address the issues mentioned above.'}\n\nSending back to Developer for fixes.`,
               },
             },
             {
               type: 'context',
               elements: [
-                { type: 'mrkdwn', text: `_Workflow: REVIEWING → IMPLEMENTING (iteration ${iteration})_` },
+                { type: 'mrkdwn', text: `_Workflow: REVIEWING → CODING (iteration ${iteration})_` },
               ],
             },
           ], kickoffMessage?.ts);
         });
 
-        // Implementer addresses the feedback
-        const fixResponse = await step.run(`implementer-fix${iterSuffix}`, async () => {
+        // Developer addresses the feedback using Claude Code CLI
+        const fixResponse = await step.run(`developer-fix${iterSuffix}`, async () => {
           const fixContext = `## Previous Implementation
 ${currentImplementation}
 
@@ -2124,20 +2362,26 @@ ${reviewerResponse.response}
 ## Issues to Address
 ${reviewDecision.issues || 'See reviewer feedback above'}`;
 
-          return generateRoleResponse(
-            'Implementer',
-            `The Reviewer has requested changes for Sprint ${sprintNumber}. Address the feedback and provide your updated implementation approach.
+          // First, get a plan from the Developer
+          const planResponse = await generateRoleResponse(
+            'Developer',
+            `The Reviewer has requested changes for Sprint ${sprintNumber}. Address the feedback and provide your fix approach.
 
-IMPORTANT: Fix the issues mentioned. DO NOT ask for clarification - just fix them and explain what you changed.`,
+IMPORTANT:
+- Check the knowledge base for similar issues you've fixed before
+- Fix the issues mentioned. DO NOT ask for clarification - just explain what you will fix.
+- Learn from any previous iteration learnings in the knowledge base.`,
             channel,
             kickoffMessage?.ts,
             fixContext,
-            { skipKnowledge: true, skipThreadHistory: true }
+            { skipKnowledge: false, skipThreadHistory: true } // Enable knowledge reading to learn from previous iterations
           );
+
+          return planResponse;
         });
 
-        await step.run(`post-implementer-fix${iterSuffix}`, async () => {
-          return postAsRole('Implementer', channel, fixResponse.response, [
+        await step.run(`post-developer-fix-plan${iterSuffix}`, async () => {
+          return postAsRole('Developer', channel, fixResponse.response, [
             {
               type: 'section',
               text: { type: 'mrkdwn', text: fixResponse.response },
@@ -2145,9 +2389,107 @@ IMPORTANT: Fix the issues mentioned. DO NOT ask for clarification - just fix the
           ], kickoffMessage?.ts);
         });
 
-        currentImplementation = fixResponse.response;
+        // Now invoke Claude Code CLI via worker to actually make the fixes
+        await step.run(`developer-notify-fix${iterSuffix}`, async () => {
+          return postAsRole('Developer', channel, 'Implementing fixes via worker service...', [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: `🔧 *Implementing Fixes (Iteration ${iteration})*\n\nSending fix request to worker service...`,
+              },
+            },
+          ], kickoffMessage?.ts);
+        });
+
+        // Send fix request to worker
+        await step.run(`send-fix-to-worker${iterSuffix}`, async () => {
+          await inngest.send({
+            name: 'worker/implementation.start',
+            data: {
+              projectId,
+              projectSlug,
+              projectPath: `/root/projects/${projectSlug}`,
+              sprintNumber,
+              sprintName: `Sprint ${sprintNumber} - Fix ${iteration}`,
+              handoffContent: `## Reviewer Feedback to Address\n\n${reviewerResponse.response}\n\n## Specific Issues\n${reviewDecision.issues || 'See reviewer feedback above'}\n\n## Task: Fix the issues identified by the Reviewer`,
+            },
+          });
+        });
+
+        // Wait for worker to complete fixes
+        const fixWorkerResult = await step.waitForEvent(`wait-for-fix${iterSuffix}`, {
+          event: 'worker/implementation.complete',
+          match: 'data.projectId',
+          timeout: '10m',
+        });
+
+        const fixCodeResult = {
+          success: fixWorkerResult?.data?.success ?? false,
+          output: fixWorkerResult?.data?.summary ?? '',
+          duration: fixWorkerResult?.data?.duration ?? 0,
+          error: fixWorkerResult?.data?.error,
+        };
+
+        // Post fix results
+        await step.run(`post-fix-result${iterSuffix}`, async () => {
+          if (fixCodeResult.success) {
+            return postAsRole('Developer', channel, 'Fixes implemented', [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: `✅ *Fixes Implemented*\n\n_Duration: ${Math.round(fixCodeResult.duration / 1000)}s_`,
+                },
+              },
+            ], kickoffMessage?.ts);
+          } else {
+            return postAsRole('Developer', channel, 'Fix implementation had issues', [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: `⚠️ *Fix Implementation Issues*\n\n${fixCodeResult.error || 'Unknown error'}`,
+                },
+              },
+            ], kickoffMessage?.ts);
+          }
+        });
+
+        // Capture iteration learning from reviewer feedback
+        await step.run(`capture-reviewer-learning${iterSuffix}`, async () => {
+          return captureIterationLearning({
+            projectId,
+            projectName,
+            sprintNumber,
+            iteration,
+            sourceRole: 'Reviewer',
+            issuesFound: reviewDecision.issues || reviewerResponse.response,
+            fixApplied: fixResponse.response,
+            codeOutput: fixCodeResult.output,
+            outcome: 'needs_more_work', // Will be reviewed again
+          });
+        });
+
+        currentImplementation = fixCodeResult.success
+          ? `${fixResponse.response}\n\n## Fix Implementation Output\n\n${fixCodeResult.output}`
+          : fixResponse.response;
         continue; // Loop back to review
       }
+
+      // Capture successful review learning
+      await step.run(`capture-review-success${iterSuffix}`, async () => {
+        return captureIterationLearning({
+          projectId,
+          projectName,
+          sprintNumber,
+          iteration,
+          sourceRole: 'Reviewer',
+          issuesFound: 'No issues - code review passed',
+          fixApplied: 'N/A - implementation met standards',
+          outcome: 'approved',
+        });
+      });
 
       // Reviewer approved - proceed to QA
       await step.run(`reviewer-approves${iterSuffix}`, async () => {
@@ -2215,27 +2557,27 @@ Make a CLEAR DECISION: Either PASS the tests, or document BUGS FOUND with specif
       });
 
       if (!qaDecision.approved) {
-        // QA found bugs - loop back to Implementer
+        // QA found bugs - loop back to Developer
         await step.run(`qa-finds-bugs${iterSuffix}`, async () => {
           return postAsRole('QA', channel, 'Bugs found', [
             {
               type: 'section',
               text: {
                 type: 'mrkdwn',
-                text: `🐛 *Bugs Found*\n\n${qaDecision.issues || 'Please fix the issues mentioned above.'}\n\nSending back to Implementer for fixes.`,
+                text: `🐛 *Bugs Found*\n\n${qaDecision.issues || 'Please fix the issues mentioned above.'}\n\nSending back to Developer for fixes.`,
               },
             },
             {
               type: 'context',
               elements: [
-                { type: 'mrkdwn', text: `_Workflow: TESTING → IMPLEMENTING (iteration ${iteration})_` },
+                { type: 'mrkdwn', text: `_Workflow: TESTING → CODING (iteration ${iteration})_` },
               ],
             },
           ], kickoffMessage?.ts);
         });
 
-        // Implementer fixes the bugs
-        const bugfixResponse = await step.run(`implementer-bugfix${iterSuffix}`, async () => {
+        // Developer fixes the bugs using Claude Code CLI
+        const bugfixResponse = await step.run(`developer-bugfix${iterSuffix}`, async () => {
           const bugfixContext = `## Current Implementation
 ${currentImplementation}
 
@@ -2245,20 +2587,26 @@ ${qaResponse.response}
 ## Bugs to Fix
 ${qaDecision.issues || 'See QA report above'}`;
 
-          return generateRoleResponse(
-            'Implementer',
-            `QA found bugs in Sprint ${sprintNumber}. Fix the issues and provide your updated implementation.
+          // First, get a plan from the Developer
+          const planResponse = await generateRoleResponse(
+            'Developer',
+            `QA found bugs in Sprint ${sprintNumber}. Explain your approach to fix these bugs.
 
-IMPORTANT: Fix ALL bugs mentioned. DO NOT ask questions - just fix them and explain what you changed.`,
+IMPORTANT:
+- Check the knowledge base for similar bugs you've fixed before
+- Fix ALL bugs mentioned. DO NOT ask questions - just explain what you will fix.
+- Learn from any previous iteration learnings in the knowledge base.`,
             channel,
             kickoffMessage?.ts,
             bugfixContext,
-            { skipKnowledge: true, skipThreadHistory: true }
+            { skipKnowledge: false, skipThreadHistory: true } // Enable knowledge reading to learn from previous iterations
           );
+
+          return planResponse;
         });
 
-        await step.run(`post-implementer-bugfix${iterSuffix}`, async () => {
-          return postAsRole('Implementer', channel, bugfixResponse.response, [
+        await step.run(`post-developer-bugfix-plan${iterSuffix}`, async () => {
+          return postAsRole('Developer', channel, bugfixResponse.response, [
             {
               type: 'section',
               text: { type: 'mrkdwn', text: bugfixResponse.response },
@@ -2266,9 +2614,107 @@ IMPORTANT: Fix ALL bugs mentioned. DO NOT ask questions - just fix them and expl
           ], kickoffMessage?.ts);
         });
 
-        currentImplementation = bugfixResponse.response;
+        // Now invoke Claude Code CLI via worker to actually fix the bugs
+        await step.run(`developer-notify-bugfix${iterSuffix}`, async () => {
+          return postAsRole('Developer', channel, 'Fixing bugs via worker service...', [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: `🐛 *Fixing Bugs (Iteration ${iteration})*\n\nSending bugfix request to worker service...`,
+              },
+            },
+          ], kickoffMessage?.ts);
+        });
+
+        // Send bugfix request to worker
+        await step.run(`send-bugfix-to-worker${iterSuffix}`, async () => {
+          await inngest.send({
+            name: 'worker/implementation.start',
+            data: {
+              projectId,
+              projectSlug,
+              projectPath: `/root/projects/${projectSlug}`,
+              sprintNumber,
+              sprintName: `Sprint ${sprintNumber} - Bugfix ${iteration}`,
+              handoffContent: `## QA Bug Report to Address\n\n${qaResponse.response}\n\n## Specific Bugs\n${qaDecision.issues || 'See QA report above'}\n\n## Task: Fix ALL bugs identified by QA`,
+            },
+          });
+        });
+
+        // Wait for worker to complete bugfixes
+        const bugfixWorkerResult = await step.waitForEvent(`wait-for-bugfix${iterSuffix}`, {
+          event: 'worker/implementation.complete',
+          match: 'data.projectId',
+          timeout: '10m',
+        });
+
+        const bugfixCodeResult = {
+          success: bugfixWorkerResult?.data?.success ?? false,
+          output: bugfixWorkerResult?.data?.summary ?? '',
+          duration: bugfixWorkerResult?.data?.duration ?? 0,
+          error: bugfixWorkerResult?.data?.error,
+        };
+
+        // Post bugfix results
+        await step.run(`post-bugfix-result${iterSuffix}`, async () => {
+          if (bugfixCodeResult.success) {
+            return postAsRole('Developer', channel, 'Bugs fixed', [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: `✅ *Bugs Fixed*\n\n_Duration: ${Math.round(bugfixCodeResult.duration / 1000)}s_`,
+                },
+              },
+            ], kickoffMessage?.ts);
+          } else {
+            return postAsRole('Developer', channel, 'Bug fix had issues', [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: `⚠️ *Bug Fix Issues*\n\n${bugfixCodeResult.error || 'Unknown error'}`,
+                },
+              },
+            ], kickoffMessage?.ts);
+          }
+        });
+
+        // Capture iteration learning from QA feedback
+        await step.run(`capture-qa-learning${iterSuffix}`, async () => {
+          return captureIterationLearning({
+            projectId,
+            projectName,
+            sprintNumber,
+            iteration,
+            sourceRole: 'QA',
+            issuesFound: qaDecision.issues || qaResponse.response,
+            fixApplied: bugfixResponse.response,
+            codeOutput: bugfixCodeResult.output,
+            outcome: 'needs_more_work', // Will be tested again
+          });
+        });
+
+        currentImplementation = bugfixCodeResult.success
+          ? `${bugfixResponse.response}\n\n## Bug Fix Output\n\n${bugfixCodeResult.output}`
+          : bugfixResponse.response;
         continue; // Loop back to review
       }
+
+      // Capture successful QA learning
+      await step.run(`capture-qa-success${iterSuffix}`, async () => {
+        return captureIterationLearning({
+          projectId,
+          projectName,
+          sprintNumber,
+          iteration,
+          sourceRole: 'QA',
+          issuesFound: 'No bugs found - all tests passed',
+          fixApplied: 'N/A - implementation passed QA',
+          outcome: 'approved',
+        });
+      });
 
       // QA passed - workflow complete!
       workflowComplete = true;
@@ -2385,6 +2831,7 @@ const handleSprintCompleted = inngest.createFunction(
   {
     id: 'sprint-completed-handler',
     name: 'Handle Sprint Completion',
+    ...WORKFLOW_RETRY_CONFIG,
   },
   { event: 'sprint/completed' },
   async ({ event, step }) => {
@@ -2479,12 +2926,14 @@ const handleSprintApproved = inngest.createFunction(
   {
     id: 'sprint-approved-handler',
     name: 'Handle Sprint Approved',
+    ...WORKFLOW_RETRY_CONFIG,
   },
   { event: 'sprint/approved' },
   async ({ event, step }) => {
     const {
       projectId,
       projectName,
+      projectSlug,
       sprintId: _sprintId,
       sprintNumber,
       sprintName,
@@ -2492,8 +2941,12 @@ const handleSprintApproved = inngest.createFunction(
       approvalNotes,
       previousSprintReview,
       handoffContent,
+      projectPath: eventProjectPath,
     } = event.data;
     const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+
+    // Determine project path - worker uses /root/projects/{slug} on Droplet
+    const _projectPath = eventProjectPath || `C:\\tpml-ai-team\\projects\\${projectSlug || projectId}`;
 
     // Step 1: CTO announces sprint start
     const startMessage = await step.run('announce-sprint-start', async () => {
@@ -2518,27 +2971,119 @@ const handleSprintApproved = inngest.createFunction(
       ]);
     });
 
-    // Step 2: Build context for Implementer
-    const context = await step.run('build-context', async () => {
-      let ctx = `Starting Sprint ${sprintNumber} (${sprintName}) for project "${projectName}".`;
-      if (sprintGoal) ctx += ` Sprint goal: ${sprintGoal}.`;
-      if (previousSprintReview) ctx += `\n\nPrevious sprint review:\n${previousSprintReview}`;
-      if (approvalNotes) ctx += `\n\nOwner approval notes: ${approvalNotes}`;
-      if (handoffContent) ctx += `\n\nOriginal handoff context:\n${handoffContent.substring(0, 500)}...`;
+    // Step 2: Fetch comprehensive context from database
+    const fullContext = await step.run('fetch-full-context', async () => {
+      // Get previous sprint reviews and artifacts
+      const project = await prisma.project.findUnique({
+        where: { id: projectId },
+        include: {
+          sprints: {
+            orderBy: { number: 'desc' },
+            take: 3, // Last 3 sprints for context
+            include: {
+              reviews: {
+                orderBy: { createdAt: 'desc' },
+                take: 1,
+              },
+            },
+          },
+          artifacts: {
+            where: {
+              type: { in: ['BACKLOG', 'ARCHITECTURE', 'HANDOFF'] },
+            },
+            orderBy: { createdAt: 'desc' },
+          },
+          conversations: {
+            where: {
+              role: { in: ['Implementer', 'Reviewer', 'QA'] },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 5, // Recent role conversations
+          },
+        },
+      });
+
+      if (!project) return null;
+
+      // Build comprehensive context
+      const backlog = project.artifacts.find(a => a.type === 'BACKLOG');
+      const architecture = project.artifacts.find(a => a.type === 'ARCHITECTURE');
+      const latestHandoff = project.artifacts.find(a => a.type === 'HANDOFF');
+
+      // Get learnings from previous sprints
+      const previousSprintSummaries = project.sprints
+        .filter(s => s.number < sprintNumber)
+        .map(s => {
+          const review = s.reviews[0];
+          return `Sprint ${s.number} (${s.name}): ${s.status}${review ? ` - Review: ${JSON.stringify(review.conversationLog).substring(0, 300)}...` : ''}`;
+        })
+        .join('\n');
+
+      return {
+        backlogContent: backlog?.content || '',
+        architectureContent: architecture?.content || '',
+        handoffContent: latestHandoff?.content || handoffContent || '',
+        previousSprintSummaries,
+        recentConversations: project.conversations.map(c => ({
+          role: c.role,
+          output: typeof c.output === 'string' ? c.output.substring(0, 200) : JSON.stringify(c.output).substring(0, 200),
+        })),
+      };
+    });
+
+    // Step 3: Build enhanced context for Implementer
+    const enhancedContext = await step.run('build-enhanced-context', async () => {
+      let ctx = `# Sprint ${sprintNumber} Implementation Context
+
+## Project: ${projectName}
+## Sprint: ${sprintName}
+${sprintGoal ? `## Goal: ${sprintGoal}` : ''}
+
+${approvalNotes ? `## Owner Approval Notes\n${approvalNotes}\n` : ''}
+
+${previousSprintReview ? `## Previous Sprint Review\n${previousSprintReview}\n` : ''}
+`;
+
+      if (fullContext) {
+        if (fullContext.previousSprintSummaries) {
+          ctx += `\n## Previous Sprint History\n${fullContext.previousSprintSummaries}\n`;
+        }
+        // Include full handoff (no truncation)
+        if (fullContext.handoffContent) {
+          ctx += `\n## Handoff Document\n${fullContext.handoffContent}\n`;
+        }
+        // Include relevant backlog section for this sprint
+        if (fullContext.backlogContent) {
+          const sprintSection = fullContext.backlogContent.match(
+            new RegExp(`### Sprint ${sprintNumber}[^#]*([\s\S]*?)(?=### Sprint ${sprintNumber + 1}|---|\n## |$)`, 'i')
+          );
+          if (sprintSection) {
+            ctx += `\n## Sprint ${sprintNumber} Backlog Items\n${sprintSection[1]}\n`;
+          }
+        }
+      }
+
       return ctx;
     });
 
-    // Step 3: Invoke Implementer to begin work
+    // Step 4: Invoke Implementer to outline approach
     const implementerResponse = await step.run('invoke-implementer', async () => {
       return generateRoleResponse(
         'Implementer',
-        `${context}\n\nWhat are your first steps for Sprint ${sprintNumber}?`,
+        `${enhancedContext}\n\nYou are starting Sprint ${sprintNumber}. Based on the context above:
+1. Summarize the key deliverables for this sprint
+2. Outline your implementation approach
+3. Identify any dependencies or blockers
+
+IMPORTANT: This is human-approved. Proceed with implementation planning - no further approval needed until sprint review. Hand off to Developer for coding.`,
         channel,
-        startMessage?.ts
+        startMessage?.ts,
+        undefined,
+        { skipKnowledge: true, skipThreadHistory: true }
       );
     });
 
-    // Step 4: Post Implementer's response
+    // Step 5: Post Implementer's response
     await step.run('post-implementer-response', async () => {
       return postAsRole('Implementer', channel, implementerResponse.response, [
         {
@@ -2548,13 +3093,134 @@ const handleSprintApproved = inngest.createFunction(
       ], startMessage?.ts);
     });
 
-    console.log(`[Sprint] Sprint ${sprintNumber} of ${projectName} approved - Implementer invoked`);
+    // Step 5b: Implementer hands off to Developer
+    await step.run('implementer-to-developer-handoff-sprint', async () => {
+      return postAsRole('Implementer', channel, 'Handing off to Developer for implementation', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `📋 *Handoff: Implementer → Developer*\n\nI've outlined the implementation plan above. Handing off to Developer to write the actual code.`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Workflow: PLANNING → CODING_` },
+          ],
+        },
+      ], startMessage?.ts);
+    });
+
+    // Step 5c: Developer acknowledges
+    const developerResponse = await step.run('developer-acknowledges-sprint', async () => {
+      return generateRoleResponse(
+        'Developer',
+        `You've received the implementation plan from the Implementer for Sprint ${sprintNumber}. Acknowledge the handoff and confirm you're starting to code.
+
+Implementation Plan:
+${implementerResponse.response}
+
+Briefly confirm what you'll be implementing, then proceed with coding.`,
+        channel,
+        startMessage?.ts,
+        undefined,
+        { skipKnowledge: false, skipThreadHistory: true }
+      );
+    });
+
+    await step.run('post-developer-acknowledgment-sprint', async () => {
+      return postAsRole('Developer', channel, developerResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: developerResponse.response },
+        },
+      ], startMessage?.ts);
+    });
+
+    // Step 6: Developer invokes Claude Code CLI via worker service
+    await step.run('developer-notify-starting-sprint', async () => {
+      return postAsRole('Developer', channel, 'Starting autonomous implementation...', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `🛠️ *Starting Sprint ${sprintNumber} Implementation*\n\nSending implementation request to worker service...\n\n_Project: \`${projectSlug || projectId}\`_`,
+          },
+        },
+      ], startMessage?.ts);
+    });
+
+    // Send implementation request to worker
+    await step.run('send-to-worker-sprint', async () => {
+      await inngest.send({
+        name: 'worker/implementation.start',
+        data: {
+          projectId,
+          projectSlug: projectSlug || projectId,
+          projectPath: `/root/projects/${projectSlug || projectId}`,
+          sprintNumber,
+          sprintName: sprintName || `Sprint ${sprintNumber}`,
+          handoffContent: `## Context\n${enhancedContext}\n\n## Implementer's Plan\n${implementerResponse.response}`,
+          backlogContent: '',
+          architectureContent: '',
+        },
+      });
+    });
+
+    // Wait for worker to complete implementation (timeout: 15 minutes)
+    const workerResult = await step.waitForEvent('wait-for-implementation-sprint', {
+      event: 'worker/implementation.complete',
+      match: 'data.projectId',
+      timeout: '15m',
+    });
+
+    // Process worker result
+    const codeResult = {
+      success: workerResult?.data?.success ?? false,
+      output: workerResult?.data?.summary ?? '',
+      duration: workerResult?.data?.duration ?? 0,
+      error: workerResult?.data?.error,
+      filesChanged: workerResult?.data?.filesChanged ?? [],
+    };
+
+    // Step 7: Post implementation results
+    await step.run('post-code-result', async () => {
+      if (codeResult.success) {
+        const summary = codeResult.output.length > 1500
+          ? codeResult.output.substring(codeResult.output.length - 1500)
+          : codeResult.output;
+
+        return postAsRole('Developer', channel, 'Sprint implementation completed', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `✅ *Sprint ${sprintNumber} Implementation Complete*\n\n_Duration: ${Math.round(codeResult.duration / 1000)}s_\n\n\`\`\`${summary.substring(0, 2000)}\`\`\``,
+            },
+          },
+        ], startMessage?.ts);
+      } else {
+        return postAsRole('Developer', channel, 'Implementation encountered issues', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `⚠️ *Implementation Issues*\n\n${codeResult.error || 'Unknown error'}\n\n_Manual intervention may be required._`,
+            },
+          },
+        ], startMessage?.ts);
+      }
+    });
+
+    console.log(`[Sprint] Sprint ${sprintNumber} of ${projectName} approved - Developer implementation ${codeResult.success ? 'completed' : 'had issues'}`);
 
     return {
       success: true,
       projectId,
       sprintNumber,
       implementerInvoked: true,
+      codeImplemented: codeResult.success,
       messageTs: startMessage?.ts,
     };
   }
@@ -2567,6 +3233,7 @@ const handleSprintRejected = inngest.createFunction(
   {
     id: 'sprint-rejected-handler',
     name: 'Handle Sprint Rejected',
+    ...WORKFLOW_RETRY_CONFIG,
   },
   { event: 'sprint/rejected' },
   async ({ event, step }) => {
@@ -2600,6 +3267,7 @@ const handleProjectCompleted = inngest.createFunction(
   {
     id: 'project-completed-handler',
     name: 'Handle Project Completion',
+    ...WORKFLOW_RETRY_CONFIG,
   },
   { event: 'project/completed' },
   async ({ event, step }) => {
@@ -2657,6 +3325,7 @@ const handleSprintFeedback = inngest.createFunction(
   {
     id: 'sprint-feedback-handler',
     name: 'Handle Sprint Feedback',
+    ...WORKFLOW_RETRY_CONFIG,
   },
   { event: 'sprint/feedback_received' },
   async ({ event, step }) => {

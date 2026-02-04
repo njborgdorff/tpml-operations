@@ -12,7 +12,7 @@ import fs from 'fs/promises';
 export interface ClaudeCodeOptions {
   projectPath: string;
   prompt: string;
-  role: 'pm' | 'architect' | 'implementer' | 'reviewer' | 'qa';
+  role: 'pm' | 'architect' | 'implementer' | 'developer' | 'reviewer' | 'qa';
   allowedTools?: string[];
   timeout?: number; // ms
   onOutput?: (chunk: string) => void;
