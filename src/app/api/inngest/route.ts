@@ -13,6 +13,9 @@ import { Inngest } from 'inngest';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaClient } from '@prisma/client';
 
+// Note: invokeClaudeCode uses child_process which doesn't work on Vercel serverless
+// CLI invocation happens via local worker or is triggered separately
+
 // Create Inngest client
 const inngest = new Inngest({ id: 'tpml-code-team' });
 
@@ -1858,12 +1861,14 @@ const handleProjectKickoff = inngest.createFunction(
     const {
       projectId,
       projectName,
-      projectSlug: _projectSlug,
+      projectSlug,
       clientName,
       sprintId: _sprintId,
       sprintNumber,
       sprintName,
       handoffContent,
+      reinitiated,
+      projectPath,
     } = event.data;
 
     const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
@@ -1899,18 +1904,26 @@ const handleProjectKickoff = inngest.createFunction(
       };
     }
 
-    // Step 1: CTO announces project kickoff
+    // Step 1: CTO announces project kickoff (or reinitiation)
     const kickoffMessage = await step.run('announce-kickoff', async () => {
-      return postAsRole('CTO', channel, `Project kickoff: ${projectName}`, [
+      const headerText = reinitiated ? '🔄 Project Re-engagement' : '🚀 Project Kickoff';
+      const statusText = reinitiated
+        ? `*${projectName}* for *${clientName}* is being re-engaged!\n\n*Sprint ${sprintNumber}:* ${sprintName}\n\n_This is a workflow reinitiation - resuming from where we left off._`
+        : `*${projectName}* for *${clientName}* is now in implementation!\n\n*Sprint ${sprintNumber}:* ${sprintName}`;
+      const contextText = reinitiated
+        ? `_Re-engaging Implementer with existing handoff document_`
+        : `_Handoff from CTO to Implementer complete_`;
+
+      return postAsRole('CTO', channel, reinitiated ? `Project re-engagement: ${projectName}` : `Project kickoff: ${projectName}`, [
         {
           type: 'header',
-          text: { type: 'plain_text', text: '🚀 Project Kickoff', emoji: true },
+          text: { type: 'plain_text', text: headerText, emoji: true },
         },
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `*${projectName}* for *${clientName}* is now in implementation!\n\n*Sprint ${sprintNumber}:* ${sprintName}`,
+            text: statusText,
           },
         },
         {
@@ -1923,7 +1936,7 @@ const handleProjectKickoff = inngest.createFunction(
         {
           type: 'context',
           elements: [
-            { type: 'mrkdwn', text: `_Handoff from CTO to Implementer complete_` },
+            { type: 'mrkdwn', text: contextText },
           ],
         },
       ]);
@@ -2011,6 +2024,114 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
       });
     }
 
+    // Step 6: CTO reviews Implementer's plan and provides feedback/approval
+    const ctoResponse = await step.run('cto-review-plan', async () => {
+      const ctoContext = `## Implementer's Plan for Sprint ${sprintNumber}
+
+${implementerResponse.response}
+
+## Handoff Document Summary
+${handoffContent ? handoffContent.substring(0, 1500) : 'See handoff document for details'}`;
+
+      const ctoPrompt = reinitiated
+        ? `The project "${projectName}" has been RE-ENGAGED after a workflow interruption.
+
+The Implementer has outlined their plan above. As CTO, please:
+1. Acknowledge the re-engagement and confirm you understand the context
+2. Review the Implementer's outlined approach
+3. Validate it aligns with the architecture and handoff requirements
+4. Provide any technical guidance or concerns
+5. Give explicit approval to proceed with implementation
+
+Keep your response concise but ensure technical oversight is clear.`
+        : `The project "${projectName}" has kicked off and the Implementer has outlined their plan above.
+
+As CTO, please:
+1. Review the Implementer's outlined approach
+2. Validate it aligns with the architecture and handoff requirements
+3. Flag any technical concerns or missing considerations
+4. Provide guidance on priorities or approach if needed
+5. Give explicit approval to proceed with implementation
+
+Keep your response concise but ensure technical oversight is clear.`;
+
+      return generateRoleResponse(
+        'CTO',
+        ctoPrompt,
+        channel,
+        kickoffMessage?.ts,
+        ctoContext,
+        { skipKnowledge: true }
+      );
+    });
+
+    // Step 7: Post CTO's response
+    await step.run('post-cto-response', async () => {
+      return postAsRole('CTO', channel, ctoResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: ctoResponse.response },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_CTO technical review complete - handing off to Architect_` },
+          ],
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 8: Architect reviews technical approach
+    const architectResponse = await step.run('architect-review', async () => {
+      const architectContext = `## Project: ${projectName}
+## Sprint ${sprintNumber}: ${sprintName}
+
+## Implementer's Plan
+${implementerResponse.response}
+
+## CTO's Technical Review
+${ctoResponse.response}
+
+## Handoff Document Summary
+${handoffContent ? handoffContent.substring(0, 1500) : 'See handoff document'}`;
+
+      const architectPrompt = `The CTO has reviewed and approved the Implementer's plan for "${projectName}" Sprint ${sprintNumber}.
+
+As Architect, please:
+1. Validate the technical approach aligns with our architecture patterns
+2. Review data model and API design considerations
+3. Identify any scalability or performance concerns
+4. Confirm infrastructure requirements are clear
+5. Provide your architectural blessing to proceed
+
+Keep your response focused on architecture validation. Be concise but thorough.`;
+
+      return generateRoleResponse(
+        'Architect',
+        architectPrompt,
+        channel,
+        kickoffMessage?.ts,
+        architectContext,
+        { skipKnowledge: true }
+      );
+    });
+
+    // Step 9: Post Architect's response
+    await step.run('post-architect-response', async () => {
+      return postAsRole('Architect', channel, architectResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: architectResponse.response },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Architecture review complete - Implementer may proceed_` },
+          ],
+        },
+      ], kickoffMessage?.ts);
+    });
+
     // =========================================================================
     // AUTOMATED ROLE-TO-ROLE WORKFLOW WITH FEEDBACK LOOPS
     // After Implementer outlines their plan, continue through Review and QA
@@ -2028,7 +2149,59 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
       iteration++;
       const iterSuffix = iteration > 1 ? `-iter${iteration}` : '';
 
-      // Step 6: Implementer signals implementation complete, hands off to Reviewer
+      // Announce implementation starting
+      await step.run(`implementer-starting${iterSuffix}`, async () => {
+        const message = iteration === 1
+          ? `🔨 *Starting Implementation*\n\nI'm now implementing Sprint ${sprintNumber} features. Invoking Claude CLI to write code...`
+          : `🔧 *Addressing Feedback (Iteration ${iteration})*\n\nI'm fixing the issues raised. Invoking Claude CLI...`;
+
+        return postAsRole('Implementer', channel, message, [
+          {
+            type: 'section',
+            text: { type: 'mrkdwn', text: message },
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Project path: ${projectPath || 'Not specified'}_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
+
+      // Emit event for local worker to invoke Claude CLI
+      // (CLI invocation can't run on Vercel serverless - needs local worker)
+      await step.run(`emit-worker-event${iterSuffix}`, async () => {
+        await inngest.send({
+          name: 'worker/implementation.start',
+          data: {
+            projectId,
+            projectSlug,
+            projectPath,
+            sprintNumber,
+            sprintName,
+            handoffContent,
+            iteration,
+            previousFeedback: iteration > 1 ? currentImplementation : null,
+          },
+        });
+        return { emitted: true };
+      });
+
+      // Post worker notification
+      await step.run(`post-worker-notification${iterSuffix}`, async () => {
+        return postAsRole('Implementer', channel, 'Implementation started on worker', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `🔨 *Implementation Started*\n\nWorker has been notified to start Sprint ${sprintNumber} implementation.\n\n_Project path: ${projectPath}_\n_Waiting for worker to complete..._`,
+            },
+          },
+        ], kickoffMessage?.ts);
+      });
+
+      // Signal handoff to Reviewer
       await step.run(`implementer-handoff${iterSuffix}`, async () => {
         const message = iteration === 1
           ? `✅ *Implementation Complete*\n\nI've completed the Sprint ${sprintNumber} implementation. Handing off to Reviewer for code review.`
@@ -2270,22 +2443,96 @@ IMPORTANT: Fix ALL bugs mentioned. DO NOT ask questions - just fix them and expl
         continue; // Loop back to review
       }
 
-      // QA passed - workflow complete!
-      workflowComplete = true;
-
+      // QA passed - notify and proceed to DevOps
       await step.run(`qa-passes${iterSuffix}`, async () => {
-        return postAsRole('QA', channel, 'QA passed, requesting human approval', [
+        return postAsRole('QA', channel, 'QA passed, handing off to DevOps', [
           {
             type: 'section',
             text: {
               type: 'mrkdwn',
-              text: `✅ *QA Testing Passed*\n\nAll tests passed. Sprint ${sprintNumber} is ready for human review and approval.`,
+              text: `✅ *QA Testing Passed*\n\nAll tests passed. Handing off to DevOps for deployment preparation.`,
             },
           },
           {
             type: 'context',
             elements: [
-              { type: 'mrkdwn', text: `_Workflow: TESTING → AWAITING_APPROVAL_` },
+              { type: 'mrkdwn', text: `_Workflow: TESTING → DEPLOYING_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
+
+      // DevOps prepares deployment
+      const devopsResponse = await step.run(`devops-deploy${iterSuffix}`, async () => {
+        const devopsContext = `## Project: ${projectName}
+## Sprint ${sprintNumber}: ${sprintName}
+
+## Implementation Summary
+${currentImplementation}
+
+## QA Results
+${qaResponse.response}
+
+## Review Summary
+${reviewerResponse.response}`;
+
+        const devopsPrompt = `Sprint ${sprintNumber} for "${projectName}" has passed QA testing and is ready for deployment.
+
+As DevOps, please:
+1. Confirm deployment readiness and environment requirements
+2. Outline the deployment steps you'll take
+3. Note any infrastructure considerations
+4. Identify monitoring/alerting to set up
+5. Confirm rollback plan if needed
+
+Keep your response focused on deployment preparation. Be concise but thorough.`;
+
+        return generateRoleResponse(
+          'DevOps',
+          devopsPrompt,
+          channel,
+          kickoffMessage?.ts,
+          devopsContext,
+          { skipKnowledge: true }
+        );
+      });
+
+      // Post DevOps response
+      await step.run(`post-devops-response${iterSuffix}`, async () => {
+        return postAsRole('DevOps', channel, devopsResponse.response, [
+          {
+            type: 'section',
+            text: { type: 'mrkdwn', text: devopsResponse.response },
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Deployment preparation complete_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
+
+      // Workflow complete - request human approval
+      workflowComplete = true;
+
+      await step.run(`request-human-approval${iterSuffix}`, async () => {
+        return postAsRole('PM', channel, 'Sprint ready for human approval', [
+          {
+            type: 'header',
+            text: { type: 'plain_text', text: '🎯 Sprint Ready for Review', emoji: true },
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*Sprint ${sprintNumber}* for *${projectName}* has completed the full workflow:\n\n✅ CTO Review\n✅ Architecture Review\n✅ Implementation\n✅ Code Review\n✅ QA Testing\n✅ Deployment Prep\n\n*Human approval required to mark sprint complete.*`,
+            },
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Workflow: DEPLOYING → AWAITING_APPROVAL_` },
             ],
           },
         ], kickoffMessage?.ts);

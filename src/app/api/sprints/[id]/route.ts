@@ -85,7 +85,7 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await request.json();
-    const { status, reviewSummary } = body;
+    const { status, reviewSummary, devServerUrl } = body;
 
     const sprint = await prisma.sprint.findUnique({
       where: { id },
@@ -108,6 +108,7 @@ export async function PATCH(
     const updateData: {
       status?: SprintStatus;
       reviewSummary?: string;
+      devServerUrl?: string | null;
       startedAt?: Date;
       completedAt?: Date;
     } = {};
@@ -126,6 +127,10 @@ export async function PATCH(
 
     if (reviewSummary !== undefined) {
       updateData.reviewSummary = reviewSummary;
+    }
+
+    if (devServerUrl !== undefined) {
+      updateData.devServerUrl = devServerUrl;
     }
 
     const updatedSprint = await prisma.sprint.update({
