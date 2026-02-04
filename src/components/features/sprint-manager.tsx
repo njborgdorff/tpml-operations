@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import {
   Loader2,
@@ -18,6 +19,12 @@ import {
   RefreshCw,
   Terminal,
   ExternalLink,
+  Globe,
+  Pencil,
+  FileCheck,
+  ChevronDown,
+  ChevronUp,
+  UserCheck,
 } from 'lucide-react';
 
 interface Sprint {
@@ -28,6 +35,8 @@ interface Sprint {
   status: string;
   startedAt: string | null;
   completedAt: string | null;
+  reviewSummary: string | null;
+  devServerUrl: string | null;
 }
 
 interface Artifact {
@@ -56,6 +65,7 @@ const statusColors: Record<string, string> = {
   IN_PROGRESS: 'bg-blue-100 text-blue-800',
   COMPLETED: 'bg-green-100 text-green-800',
   BLOCKED: 'bg-red-100 text-red-800',
+  AWAITING_APPROVAL: 'bg-amber-100 text-amber-800',
 };
 
 const statusIcons: Record<string, React.ReactNode> = {
@@ -63,6 +73,7 @@ const statusIcons: Record<string, React.ReactNode> = {
   IN_PROGRESS: <Loader2 className="h-4 w-4 animate-spin" />,
   COMPLETED: <CheckCircle className="h-4 w-4" />,
   BLOCKED: <AlertCircle className="h-4 w-4" />,
+  AWAITING_APPROVAL: <UserCheck className="h-4 w-4" />,
 };
 
 export function SprintManager({ project, sprints, artifacts }: SprintManagerProps) {
@@ -75,6 +86,9 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
     projectPath: string;
     cliCommand: string;
   } | null>(null);
+  const [expandedSprints, setExpandedSprints] = useState<Set<string>>(new Set());
+  const [editingDevUrl, setEditingDevUrl] = useState<string | null>(null);
+  const [devUrlInput, setDevUrlInput] = useState('');
 
   const hasHandoff = artifacts.some(a => a.name === 'HANDOFF_CTO_TO_IMPLEMENTER.md');
   const activeSprint = sprints.find(s => s.status === 'IN_PROGRESS');
@@ -150,6 +164,47 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
 
   // CLI command for this project
   const cliCommand = `cd "C:\\tpml-ai-team\\projects\\${project.slug}" && claude`;
+
+  const toggleSprintExpanded = (sprintId: string) => {
+    setExpandedSprints((prev: Set<string>) => {
+      const newSet = new Set(prev);
+      if (newSet.has(sprintId)) {
+        newSet.delete(sprintId);
+      } else {
+        newSet.add(sprintId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleDevUrlUpdate = async (sprintId: string) => {
+    setIsUpdating(true);
+    try {
+      const response = await fetch(`/api/sprints/${sprintId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ devServerUrl: devUrlInput || null }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Update failed');
+      }
+
+      toast.success('Dev server URL updated!');
+      setEditingDevUrl(null);
+      setDevUrlInput('');
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Update failed');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const completedSprintsList = sprints.filter(s => s.status === 'COMPLETED');
+  const sprintAwaitingApproval = sprints.find(s => s.status === 'AWAITING_APPROVAL');
+  const hasCompletedSprints = completedSprintsList.length > 0;
 
   return (
     <div className="space-y-6">
@@ -334,6 +389,215 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
                 className="bg-green-600 h-2 rounded-full transition-all duration-500"
                 style={{ width: `${progressPercent}%` }}
               />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Sprint Awaiting Approval */}
+      {sprintAwaitingApproval && (
+        <Card className="border-amber-200 bg-gradient-to-r from-amber-50 to-yellow-50">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <UserCheck className="h-5 w-5 text-amber-600" />
+              Sprint {sprintAwaitingApproval.number} Ready for Review
+            </CardTitle>
+            <CardDescription>
+              The previous sprint has been completed. Review the work and approve to start the next sprint.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="p-4 rounded-lg bg-white border border-amber-200">
+              <p className="font-medium">
+                Sprint {sprintAwaitingApproval.number}{sprintAwaitingApproval.name ? `: ${sprintAwaitingApproval.name}` : ''}
+              </p>
+              {sprintAwaitingApproval.goal && (
+                <p className="text-sm text-muted-foreground mt-1">{sprintAwaitingApproval.goal}</p>
+              )}
+            </div>
+            <Button
+              onClick={() => handleSprintUpdate(sprintAwaitingApproval.id, 'IN_PROGRESS')}
+              disabled={isUpdating}
+              className="bg-amber-600 hover:bg-amber-700"
+            >
+              {isUpdating ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Starting...
+                </>
+              ) : (
+                <>
+                  <Play className="h-4 w-4 mr-2" />
+                  Approve &amp; Start Sprint {sprintAwaitingApproval.number}
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Completed Sprints with Reports */}
+      {hasCompletedSprints && (
+        <Card className="border-green-200">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileCheck className="h-5 w-5 text-green-600" />
+              Completed Sprint Reports
+            </CardTitle>
+            <CardDescription>
+              Review completed sprints and test the delivered features
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {completedSprintsList.map((sprint) => {
+                const isExpanded = expandedSprints.has(sprint.id);
+                const isEditingUrl = editingDevUrl === sprint.id;
+
+                return (
+                  <div
+                    key={sprint.id}
+                    className="rounded-lg border border-green-200 bg-green-50 overflow-hidden"
+                  >
+                    {/* Sprint Header */}
+                    <div
+                      className="flex items-center justify-between p-4 cursor-pointer hover:bg-green-100 transition-colors"
+                      onClick={() => toggleSprintExpanded(sprint.id)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <CheckCircle className="h-5 w-5 text-green-600" />
+                        <div>
+                          <p className="font-medium">
+                            Sprint {sprint.number}{sprint.name ? `: ${sprint.name}` : ''}
+                          </p>
+                          {sprint.completedAt && (
+                            <p className="text-sm text-muted-foreground">
+                              Completed {new Date(sprint.completedAt).toLocaleDateString()}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {sprint.devServerUrl && (
+                          <a
+                            href={sprint.devServerUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-blue-600 hover:text-blue-800"
+                          >
+                            <Globe className="h-5 w-5" />
+                          </a>
+                        )}
+                        {isExpanded ? (
+                          <ChevronUp className="h-5 w-5 text-muted-foreground" />
+                        ) : (
+                          <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Expanded Content */}
+                    {isExpanded && (
+                      <div className="border-t border-green-200 p-4 bg-white space-y-4">
+                        {/* Review Summary */}
+                        {sprint.reviewSummary ? (
+                          <div>
+                            <h4 className="font-medium text-sm mb-2 flex items-center gap-2">
+                              <FileText className="h-4 w-4" />
+                              Sprint Report
+                            </h4>
+                            <div className="prose prose-sm max-w-none bg-gray-50 p-3 rounded-lg">
+                              <pre className="whitespace-pre-wrap text-sm font-sans">
+                                {sprint.reviewSummary}
+                              </pre>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground italic">
+                            No sprint report available yet.
+                          </p>
+                        )}
+
+                        {/* Dev Server URL */}
+                        <div>
+                          <h4 className="font-medium text-sm mb-2 flex items-center gap-2">
+                            <Globe className="h-4 w-4" />
+                            Test/Preview URL
+                          </h4>
+                          {isEditingUrl ? (
+                            <div className="flex gap-2">
+                              <Input
+                                type="url"
+                                placeholder="https://dev.example.com/..."
+                                value={devUrlInput}
+                                onChange={(e) => setDevUrlInput(e.target.value)}
+                                className="flex-1"
+                                autoFocus
+                              />
+                              <Button
+                                size="sm"
+                                onClick={() => handleDevUrlUpdate(sprint.id)}
+                                disabled={isUpdating}
+                              >
+                                {isUpdating ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Check className="h-4 w-4" />
+                                )}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setEditingDevUrl(null);
+                                  setDevUrlInput('');
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          ) : sprint.devServerUrl ? (
+                            <div className="flex items-center gap-2">
+                              <a
+                                href={sprint.devServerUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:text-blue-800 underline flex items-center gap-1"
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                                {sprint.devServerUrl}
+                              </a>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setEditingDevUrl(sprint.id);
+                                  setDevUrlInput(sprint.devServerUrl || '');
+                                }}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setEditingDevUrl(sprint.id);
+                                setDevUrlInput('');
+                              }}
+                            >
+                              <Globe className="h-4 w-4 mr-2" />
+                              Add preview URL
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
