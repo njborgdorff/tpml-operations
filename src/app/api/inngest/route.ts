@@ -3141,23 +3141,47 @@ const handleSprintApproved = inngest.createFunction(
       ]);
     });
 
-    // Step 2: Build context for Implementer
-    const context = await step.run('build-context', async () => {
-      let ctx = `Starting Sprint ${sprintNumber} (${sprintName}) for project "${projectName}".`;
-      if (sprintGoal) ctx += ` Sprint goal: ${sprintGoal}.`;
-      if (previousSprintReview) ctx += `\n\nPrevious sprint review:\n${previousSprintReview}`;
-      if (approvalNotes) ctx += `\n\nOwner approval notes: ${approvalNotes}`;
-      if (handoffContent) ctx += `\n\nOriginal handoff context:\n${handoffContent.substring(0, 500)}...`;
-      return ctx;
-    });
+    // Step 2: Build full context for Implementer with complete documents
+    const implementerContext = `## SPRINT ${sprintNumber} HANDOFF DOCUMENT - USE THIS (DO NOT ASK FOR IT)
 
-    // Step 3: Invoke Implementer to begin work
+The complete handoff document is provided below. You MUST use this document directly.
+
+---
+${handoffContent || `Sprint ${sprintNumber} (${sprintName}) for project "${projectName}".
+Sprint Goal: ${sprintGoal || 'See backlog items'}
+${previousSprintReview ? `\nPrevious Sprint Review:\n${previousSprintReview}` : ''}
+${approvalNotes ? `\nOwner Approval Notes: ${approvalNotes}` : ''}`}
+---
+
+END OF HANDOFF DOCUMENT`;
+
+    // Step 3: Invoke Implementer to begin work with full context
     const implementerResponse = await step.run('invoke-implementer', async () => {
+      const prompt = `PROJECT: "${projectName}" - Sprint ${sprintNumber} (${sprintName})
+
+YOUR HANDOFF DOCUMENT IS PROVIDED ABOVE in "Additional Context". It contains:
+- Sprint goal and requirements
+- Full BACKLOG.md content
+- Full ARCHITECTURE.md content
+- Previous sprint review (if applicable)
+
+INSTRUCTIONS:
+1. Read the handoff document provided above (it's already in your context)
+2. Summarize the KEY deliverables for Sprint ${sprintNumber}
+3. List the specific tasks you will implement
+4. Outline your implementation approach and first steps
+
+IMPORTANT: You are authorized to proceed. DO NOT ask for permission or additional documents.
+DO NOT ask for BACKLOG.md or ARCHITECTURE.md - they are included in the handoff above.
+Start working immediately based on the handoff document.`;
+
       return generateRoleResponse(
         'Implementer',
-        `${context}\n\nWhat are your first steps for Sprint ${sprintNumber}?`,
+        prompt,
         channel,
-        startMessage?.ts
+        startMessage?.ts,
+        implementerContext,
+        { skipKnowledge: true }
       );
     });
 
