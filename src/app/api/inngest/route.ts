@@ -1861,7 +1861,7 @@ const handleProjectKickoff = inngest.createFunction(
     const {
       projectId,
       projectName,
-      projectSlug: _projectSlug,
+      projectSlug,
       clientName,
       sprintId: _sprintId,
       sprintNumber,
@@ -2171,14 +2171,16 @@ Keep your response focused on architecture validation. Be concise but thorough.`
 
       // Emit event for local worker to invoke Claude CLI
       // (CLI invocation can't run on Vercel serverless - needs local worker)
-      await step.run(`emit-cli-event${iterSuffix}`, async () => {
+      await step.run(`emit-worker-event${iterSuffix}`, async () => {
         await inngest.send({
-          name: 'implementer/cli_requested',
+          name: 'worker/implementation.start',
           data: {
             projectId,
-            projectName,
+            projectSlug,
             projectPath,
             sprintNumber,
+            sprintName,
+            handoffContent,
             iteration,
             previousFeedback: iteration > 1 ? currentImplementation : null,
           },
@@ -2186,15 +2188,14 @@ Keep your response focused on architecture validation. Be concise but thorough.`
         return { emitted: true };
       });
 
-      // Post CLI instructions
-      await step.run(`post-cli-instructions${iterSuffix}`, async () => {
-        const cliCommand = `cd "${projectPath}" && claude`;
-        return postAsRole('Implementer', channel, 'Ready for implementation', [
+      // Post worker notification
+      await step.run(`post-worker-notification${iterSuffix}`, async () => {
+        return postAsRole('Implementer', channel, 'Implementation started on worker', [
           {
             type: 'section',
             text: {
               type: 'mrkdwn',
-              text: `💻 *Ready for Implementation*\n\nTo write code for Sprint ${sprintNumber}, run Claude CLI:\n\n\`\`\`${cliCommand}\`\`\`\n\n_A local worker will pick this up automatically if configured, or run manually._`,
+              text: `🔨 *Implementation Started*\n\nWorker has been notified to start Sprint ${sprintNumber} implementation.\n\n_Project path: ${projectPath}_\n_Waiting for worker to complete..._`,
             },
           },
         ], kickoffMessage?.ts);
