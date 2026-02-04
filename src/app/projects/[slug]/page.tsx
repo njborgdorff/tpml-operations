@@ -7,6 +7,7 @@ import { SprintManager } from '@/components/features/sprint-manager';
 import { GeneratePlanButton } from '@/components/features/generate-plan-button';
 import { DeleteProjectButton } from '@/components/features/delete-project-button';
 import { ReinitiateButton } from '@/components/features/reinitiate-button';
+import { ResetProjectButton } from '@/components/features/reset-project-button';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -215,6 +216,22 @@ export default async function ProjectPage({ params }: PageProps) {
           </CardContent>
         </Card>
       )}
+
+      {/* Testing Tools */}
+      <Card className="mt-6 border-amber-200 bg-amber-50">
+        <CardHeader>
+          <CardTitle className="text-amber-800">Testing Tools</CardTitle>
+          <CardDescription>
+            Reset the project to re-run the AI workflow from the beginning
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResetProjectButton
+            projectId={project.id}
+            projectName={project.name}
+          />
+        </CardContent>
+      </Card>
 
       {/* Danger Zone - Delete Project */}
       <Card className="mt-8 border-red-200">
