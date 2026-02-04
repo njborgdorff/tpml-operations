@@ -35,7 +35,7 @@ const prisma = new PrismaClient();
 // ============================================================================
 
 // Code team roles
-type CodeTeamRole = 'PM' | 'Architect' | 'Implementer' | 'Reviewer' | 'QA' | 'Tester' | 'DevOps';
+type CodeTeamRole = 'PM' | 'Architect' | 'Implementer' | 'Developer' | 'Reviewer' | 'QA' | 'Tester' | 'DevOps';
 
 // Executive roles
 type ExecutiveRole = 'CTO' | 'CMO' | 'COO' | 'CFO';
@@ -49,6 +49,7 @@ function getRoleToken(role: AITeamRole): string {
     PM: process.env.SLACK_BOT_TOKEN_PM,
     Architect: process.env.SLACK_BOT_TOKEN_ARCHITECT,
     Implementer: process.env.SLACK_BOT_TOKEN_IMPLEMENTER,
+    Developer: process.env.SLACK_BOT_TOKEN_DEVELOPER,
     Reviewer: process.env.SLACK_BOT_TOKEN_REVIEWER,
     QA: process.env.SLACK_BOT_TOKEN_QA,
     Tester: process.env.SLACK_BOT_TOKEN_TESTER,
@@ -649,6 +650,7 @@ function getUserIdToRoleMap(): Record<string, AITeamRole> {
     [process.env.SLACK_BOT_USER_ID_PM || 'U0ACF8WDXM1']: 'PM',
     [process.env.SLACK_BOT_USER_ID_ARCHITECT || 'U0ACF97BPU3']: 'Architect',
     [process.env.SLACK_BOT_USER_ID_IMPLEMENTER || 'U0AD0JNMNCR']: 'Implementer',
+    [process.env.SLACK_BOT_USER_ID_DEVELOPER || 'U0DEVELOPER']: 'Developer',
     [process.env.SLACK_BOT_USER_ID_REVIEWER || 'U0AD0JQRX9P']: 'Reviewer',
     [process.env.SLACK_BOT_USER_ID_QA || 'U0ACKL20N7Q']: 'QA',
     [process.env.SLACK_BOT_USER_ID_TESTER || 'U0AD0KBMXUZ']: 'Tester',
@@ -757,7 +759,39 @@ When a handoff document or project documentation appears in your context (especi
 
 Standards: TypeScript strict mode, Server Components default, co-located tests, Zod validation, conventional commits.
 
-Communication style: Be practical and code-focused. When given documentation, summarize what you received and proceed with implementation planning.`,
+Communication style: Be practical and code-focused. When given documentation, summarize what you received and proceed with implementation planning. Hand off to Developer for actual coding.`,
+
+    Developer: `You are the Developer for TPML (Total Product Management, Ltd.), an AI-staffed organization.
+
+Your role is to write actual production code using Claude Code CLI. You receive implementation plans from the Implementer and translate them into working code.
+
+**You DO:**
+- Write production code following the Implementer's plan
+- Implement features according to specifications
+- Fix bugs identified by Reviewer or QA
+- Write unit tests alongside your code
+- Follow coding standards and patterns from the codebase
+- Create meaningful git commits as you work
+- Use Claude Code CLI to make actual file changes
+
+**You DO NOT:**
+- Plan or design architecture (that's Implementer/Architect)
+- Review code (that's Reviewer)
+- Write e2e tests (that's Tester)
+- Modify CI/CD (that's DevOps)
+- Ask for clarification - just implement based on the plan provided
+
+**CRITICAL - Autonomous Coding:**
+When you receive a handoff from the Implementer:
+1. Read the existing codebase to understand patterns
+2. Implement the features as specified
+3. Write tests for your changes
+4. Commit your work with clear messages
+5. Hand off to Reviewer when complete
+
+Standards: TypeScript strict mode, Server Components default, co-located tests, Zod validation, conventional commits.
+
+Communication style: Be code-focused and action-oriented. Show what you built, not what you plan to build.`,
 
     Reviewer: `You are the Reviewer for TPML (Total Product Management, Ltd.), an AI-staffed organization.
 
@@ -2084,16 +2118,61 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
     }
 
     // =========================================================================
-    // INVOKE CLAUDE CODE CLI FOR ACTUAL IMPLEMENTATION
-    // The Implementer now actually writes code using Claude Code CLI
+    // HANDOFF TO DEVELOPER FOR ACTUAL CODING
+    // Implementer plans, Developer writes code using Claude Code CLI
     // =========================================================================
 
     // Determine project path - use provided path or construct from slug
     const effectiveProjectPath = projectPath || `C:\\tpml-ai-team\\projects\\${projectSlug}`;
 
-    // Step 5b: Invoke Claude Code CLI to actually implement the code
-    const codeResult = await step.run('invoke-claude-code-cli', async () => {
-      await postAsRole('Implementer', channel, 'Starting autonomous implementation...', [
+    // Step 5b: Implementer hands off to Developer
+    await step.run('implementer-to-developer-handoff', async () => {
+      return postAsRole('Implementer', channel, 'Handing off to Developer for implementation', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `📋 *Handoff: Implementer → Developer*\n\nI've outlined the implementation plan above. Handing off to Developer to write the actual code.`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Workflow: PLANNING → CODING_` },
+          ],
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 5c: Developer acknowledges and starts coding
+    const developerResponse = await step.run('developer-acknowledges', async () => {
+      return generateRoleResponse(
+        'Developer',
+        `You've received the implementation plan from the Implementer. Acknowledge the handoff and confirm you're starting to code.
+
+Implementation Plan:
+${implementerResponse.response}
+
+Briefly confirm what you'll be implementing, then proceed with coding.`,
+        channel,
+        kickoffMessage?.ts,
+        undefined,
+        { skipKnowledge: false, skipThreadHistory: true }
+      );
+    });
+
+    await step.run('post-developer-acknowledgment', async () => {
+      return postAsRole('Developer', channel, developerResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: developerResponse.response },
+        },
+      ], kickoffMessage?.ts);
+    });
+
+    // Step 5d: Developer invokes Claude Code CLI to actually implement the code
+    const codeResult = await step.run('developer-invoke-claude-code-cli', async () => {
+      await postAsRole('Developer', channel, 'Starting autonomous implementation...', [
         {
           type: 'section',
           text: {
@@ -2105,14 +2184,18 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
 
       try {
         // Build role-specific prompt with handoff context
-        const codePrompt = await buildRolePrompt(effectiveProjectPath, 'implementer', `
+        const codePrompt = await buildRolePrompt(effectiveProjectPath, 'developer', `
 ## Sprint ${sprintNumber} Implementation
 
+## Implementer's Plan
+${implementerResponse.response}
+
+## Original Handoff
 ${handoffContent}
 
 ## Your Task
 
-Implement the Sprint ${sprintNumber} features as outlined in the handoff document above.
+Implement the Sprint ${sprintNumber} features as outlined by the Implementer above.
 
 1. Read existing code structure in the project
 2. Implement the required features following existing patterns
@@ -2127,7 +2210,7 @@ IMPORTANT: This is autonomous implementation. Proceed with coding - no human app
         const result = await invokeClaudeCode({
           projectPath: effectiveProjectPath,
           prompt: codePrompt,
-          role: 'implementer',
+          role: 'developer',
           timeout: 600000, // 10 minutes for implementation
         });
 
@@ -2158,7 +2241,7 @@ IMPORTANT: This is autonomous implementation. Proceed with coding - no human app
           ? codeResult.output.substring(codeResult.output.length - 1500)
           : codeResult.output;
 
-        return postAsRole('Implementer', channel, 'Implementation completed', [
+        return postAsRole('Developer', channel, 'Implementation completed', [
           {
             type: 'section',
             text: {
@@ -2168,7 +2251,7 @@ IMPORTANT: This is autonomous implementation. Proceed with coding - no human app
           },
         ], kickoffMessage?.ts);
       } else {
-        return postAsRole('Implementer', channel, 'Implementation encountered issues', [
+        return postAsRole('Developer', channel, 'Implementation encountered issues', [
           {
             type: 'section',
             text: {
@@ -2200,13 +2283,13 @@ IMPORTANT: This is autonomous implementation. Proceed with coding - no human app
       iteration++;
       const iterSuffix = iteration > 1 ? `-iter${iteration}` : '';
 
-      // Step 6: Implementer signals implementation complete, hands off to Reviewer
-      await step.run(`implementer-handoff${iterSuffix}`, async () => {
+      // Step 6: Developer signals implementation complete, hands off to Reviewer
+      await step.run(`developer-handoff${iterSuffix}`, async () => {
         const message = iteration === 1
           ? `✅ *Implementation Complete*\n\nI've completed the Sprint ${sprintNumber} implementation. Handing off to Reviewer for code review.`
           : `✅ *Fixes Complete (Iteration ${iteration})*\n\nI've addressed the feedback and completed the fixes. Handing off to Reviewer for re-review.`;
 
-        return postAsRole('Implementer', channel, 'Implementation complete, handing off to Reviewer', [
+        return postAsRole('Developer', channel, 'Implementation complete, handing off to Reviewer', [
           {
             type: 'section',
             text: { type: 'mrkdwn', text: message },
@@ -2214,7 +2297,7 @@ IMPORTANT: This is autonomous implementation. Proceed with coding - no human app
           {
             type: 'context',
             elements: [
-              { type: 'mrkdwn', text: `_Workflow: IMPLEMENTING → REVIEWING${iteration > 1 ? ` (iteration ${iteration})` : ''}_` },
+              { type: 'mrkdwn', text: `_Workflow: CODING → REVIEWING${iteration > 1 ? ` (iteration ${iteration})` : ''}_` },
             ],
           },
         ], kickoffMessage?.ts);
@@ -2222,7 +2305,7 @@ IMPORTANT: This is autonomous implementation. Proceed with coding - no human app
 
       // Step 7: Invoke Reviewer to review the implementation
       const reviewerResponse = await step.run(`invoke-reviewer${iterSuffix}`, async () => {
-        const reviewContext = `## Implementation Summary from Implementer${iteration > 1 ? ` (Iteration ${iteration})` : ''}
+        const reviewContext = `## Implementation Summary from Developer${iteration > 1 ? ` (Iteration ${iteration})` : ''}
 
 ${currentImplementation}
 
@@ -2266,27 +2349,27 @@ Make a CLEAR DECISION: Either APPROVE to proceed to QA, or REQUEST CHANGES with 
       });
 
       if (!reviewDecision.approved) {
-        // Reviewer requested changes - loop back to Implementer
+        // Reviewer requested changes - loop back to Developer
         await step.run(`reviewer-requests-changes${iterSuffix}`, async () => {
           return postAsRole('Reviewer', channel, 'Changes requested', [
             {
               type: 'section',
               text: {
                 type: 'mrkdwn',
-                text: `⚠️ *Changes Requested*\n\n${reviewDecision.issues || 'Please address the issues mentioned above.'}\n\nSending back to Implementer for fixes.`,
+                text: `⚠️ *Changes Requested*\n\n${reviewDecision.issues || 'Please address the issues mentioned above.'}\n\nSending back to Developer for fixes.`,
               },
             },
             {
               type: 'context',
               elements: [
-                { type: 'mrkdwn', text: `_Workflow: REVIEWING → IMPLEMENTING (iteration ${iteration})_` },
+                { type: 'mrkdwn', text: `_Workflow: REVIEWING → CODING (iteration ${iteration})_` },
               ],
             },
           ], kickoffMessage?.ts);
         });
 
-        // Implementer addresses the feedback using Claude Code CLI
-        const fixResponse = await step.run(`implementer-fix${iterSuffix}`, async () => {
+        // Developer addresses the feedback using Claude Code CLI
+        const fixResponse = await step.run(`developer-fix${iterSuffix}`, async () => {
           const fixContext = `## Previous Implementation
 ${currentImplementation}
 
@@ -2296,9 +2379,9 @@ ${reviewerResponse.response}
 ## Issues to Address
 ${reviewDecision.issues || 'See reviewer feedback above'}`;
 
-          // First, get a plan from the Implementer
+          // First, get a plan from the Developer
           const planResponse = await generateRoleResponse(
-            'Implementer',
+            'Developer',
             `The Reviewer has requested changes for Sprint ${sprintNumber}. Address the feedback and provide your fix approach.
 
 IMPORTANT:
@@ -2314,8 +2397,8 @@ IMPORTANT:
           return planResponse;
         });
 
-        await step.run(`post-implementer-fix-plan${iterSuffix}`, async () => {
-          return postAsRole('Implementer', channel, fixResponse.response, [
+        await step.run(`post-developer-fix-plan${iterSuffix}`, async () => {
+          return postAsRole('Developer', channel, fixResponse.response, [
             {
               type: 'section',
               text: { type: 'mrkdwn', text: fixResponse.response },
@@ -2324,8 +2407,8 @@ IMPORTANT:
         });
 
         // Now invoke Claude Code CLI to actually make the fixes
-        const fixCodeResult = await step.run(`invoke-claude-code-fix${iterSuffix}`, async () => {
-          await postAsRole('Implementer', channel, 'Implementing fixes with Claude Code CLI...', [
+        const fixCodeResult = await step.run(`developer-invoke-claude-code-fix${iterSuffix}`, async () => {
+          await postAsRole('Developer', channel, 'Implementing fixes with Claude Code CLI...', [
             {
               type: 'section',
               text: {
@@ -2336,7 +2419,7 @@ IMPORTANT:
           ], kickoffMessage?.ts);
 
           try {
-            const fixPrompt = await buildRolePrompt(effectiveProjectPath, 'implementer', `
+            const fixPrompt = await buildRolePrompt(effectiveProjectPath, 'developer', `
 ## Reviewer Feedback to Address
 
 ${reviewerResponse.response}
@@ -2357,7 +2440,7 @@ IMPORTANT: This is autonomous fixing. Proceed with implementing fixes - no human
             const result = await invokeClaudeCode({
               projectPath: effectiveProjectPath,
               prompt: fixPrompt,
-              role: 'implementer',
+              role: 'developer',
               timeout: 300000, // 5 minutes for fixes
             });
 
@@ -2376,7 +2459,7 @@ IMPORTANT: This is autonomous fixing. Proceed with implementing fixes - no human
         // Post fix results
         await step.run(`post-fix-result${iterSuffix}`, async () => {
           if (fixCodeResult.success) {
-            return postAsRole('Implementer', channel, 'Fixes implemented', [
+            return postAsRole('Developer', channel, 'Fixes implemented', [
               {
                 type: 'section',
                 text: {
@@ -2386,7 +2469,7 @@ IMPORTANT: This is autonomous fixing. Proceed with implementing fixes - no human
               },
             ], kickoffMessage?.ts);
           } else {
-            return postAsRole('Implementer', channel, 'Fix implementation had issues', [
+            return postAsRole('Developer', channel, 'Fix implementation had issues', [
               {
                 type: 'section',
                 text: {
@@ -2499,27 +2582,27 @@ Make a CLEAR DECISION: Either PASS the tests, or document BUGS FOUND with specif
       });
 
       if (!qaDecision.approved) {
-        // QA found bugs - loop back to Implementer
+        // QA found bugs - loop back to Developer
         await step.run(`qa-finds-bugs${iterSuffix}`, async () => {
           return postAsRole('QA', channel, 'Bugs found', [
             {
               type: 'section',
               text: {
                 type: 'mrkdwn',
-                text: `🐛 *Bugs Found*\n\n${qaDecision.issues || 'Please fix the issues mentioned above.'}\n\nSending back to Implementer for fixes.`,
+                text: `🐛 *Bugs Found*\n\n${qaDecision.issues || 'Please fix the issues mentioned above.'}\n\nSending back to Developer for fixes.`,
               },
             },
             {
               type: 'context',
               elements: [
-                { type: 'mrkdwn', text: `_Workflow: TESTING → IMPLEMENTING (iteration ${iteration})_` },
+                { type: 'mrkdwn', text: `_Workflow: TESTING → CODING (iteration ${iteration})_` },
               ],
             },
           ], kickoffMessage?.ts);
         });
 
-        // Implementer fixes the bugs using Claude Code CLI
-        const bugfixResponse = await step.run(`implementer-bugfix${iterSuffix}`, async () => {
+        // Developer fixes the bugs using Claude Code CLI
+        const bugfixResponse = await step.run(`developer-bugfix${iterSuffix}`, async () => {
           const bugfixContext = `## Current Implementation
 ${currentImplementation}
 
@@ -2529,9 +2612,9 @@ ${qaResponse.response}
 ## Bugs to Fix
 ${qaDecision.issues || 'See QA report above'}`;
 
-          // First, get a plan from the Implementer
+          // First, get a plan from the Developer
           const planResponse = await generateRoleResponse(
-            'Implementer',
+            'Developer',
             `QA found bugs in Sprint ${sprintNumber}. Explain your approach to fix these bugs.
 
 IMPORTANT:
@@ -2547,8 +2630,8 @@ IMPORTANT:
           return planResponse;
         });
 
-        await step.run(`post-implementer-bugfix-plan${iterSuffix}`, async () => {
-          return postAsRole('Implementer', channel, bugfixResponse.response, [
+        await step.run(`post-developer-bugfix-plan${iterSuffix}`, async () => {
+          return postAsRole('Developer', channel, bugfixResponse.response, [
             {
               type: 'section',
               text: { type: 'mrkdwn', text: bugfixResponse.response },
@@ -2557,8 +2640,8 @@ IMPORTANT:
         });
 
         // Now invoke Claude Code CLI to actually fix the bugs
-        const bugfixCodeResult = await step.run(`invoke-claude-code-bugfix${iterSuffix}`, async () => {
-          await postAsRole('Implementer', channel, 'Fixing bugs with Claude Code CLI...', [
+        const bugfixCodeResult = await step.run(`developer-invoke-claude-code-bugfix${iterSuffix}`, async () => {
+          await postAsRole('Developer', channel, 'Fixing bugs with Claude Code CLI...', [
             {
               type: 'section',
               text: {
@@ -2569,7 +2652,7 @@ IMPORTANT:
           ], kickoffMessage?.ts);
 
           try {
-            const bugfixPrompt = await buildRolePrompt(effectiveProjectPath, 'implementer', `
+            const bugfixPrompt = await buildRolePrompt(effectiveProjectPath, 'developer', `
 ## QA Bug Report to Address
 
 ${qaResponse.response}
@@ -2590,7 +2673,7 @@ IMPORTANT: This is autonomous bug fixing. Fix all issues - no human approval nee
             const result = await invokeClaudeCode({
               projectPath: effectiveProjectPath,
               prompt: bugfixPrompt,
-              role: 'implementer',
+              role: 'developer',
               timeout: 300000, // 5 minutes for bug fixes
             });
 
@@ -2609,7 +2692,7 @@ IMPORTANT: This is autonomous bug fixing. Fix all issues - no human approval nee
         // Post bugfix results
         await step.run(`post-bugfix-result${iterSuffix}`, async () => {
           if (bugfixCodeResult.success) {
-            return postAsRole('Implementer', channel, 'Bugs fixed', [
+            return postAsRole('Developer', channel, 'Bugs fixed', [
               {
                 type: 'section',
                 text: {
@@ -2619,7 +2702,7 @@ IMPORTANT: This is autonomous bug fixing. Fix all issues - no human approval nee
               },
             ], kickoffMessage?.ts);
           } else {
-            return postAsRole('Implementer', channel, 'Bug fix had issues', [
+            return postAsRole('Developer', channel, 'Bug fix had issues', [
               {
                 type: 'section',
                 text: {
@@ -3025,7 +3108,7 @@ ${previousSprintReview ? `## Previous Sprint Review\n${previousSprintReview}\n` 
 2. Outline your implementation approach
 3. Identify any dependencies or blockers
 
-IMPORTANT: This is human-approved. Proceed with implementation planning - no further approval needed until sprint review.`,
+IMPORTANT: This is human-approved. Proceed with implementation planning - no further approval needed until sprint review. Hand off to Developer for coding.`,
         channel,
         startMessage?.ts,
         undefined,
@@ -3043,9 +3126,54 @@ IMPORTANT: This is human-approved. Proceed with implementation planning - no fur
       ], startMessage?.ts);
     });
 
-    // Step 6: Invoke Claude Code CLI for actual implementation
-    const codeResult = await step.run('invoke-claude-code-sprint', async () => {
-      await postAsRole('Implementer', channel, 'Starting autonomous implementation...', [
+    // Step 5b: Implementer hands off to Developer
+    await step.run('implementer-to-developer-handoff-sprint', async () => {
+      return postAsRole('Implementer', channel, 'Handing off to Developer for implementation', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `📋 *Handoff: Implementer → Developer*\n\nI've outlined the implementation plan above. Handing off to Developer to write the actual code.`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Workflow: PLANNING → CODING_` },
+          ],
+        },
+      ], startMessage?.ts);
+    });
+
+    // Step 5c: Developer acknowledges
+    const developerResponse = await step.run('developer-acknowledges-sprint', async () => {
+      return generateRoleResponse(
+        'Developer',
+        `You've received the implementation plan from the Implementer for Sprint ${sprintNumber}. Acknowledge the handoff and confirm you're starting to code.
+
+Implementation Plan:
+${implementerResponse.response}
+
+Briefly confirm what you'll be implementing, then proceed with coding.`,
+        channel,
+        startMessage?.ts,
+        undefined,
+        { skipKnowledge: false, skipThreadHistory: true }
+      );
+    });
+
+    await step.run('post-developer-acknowledgment-sprint', async () => {
+      return postAsRole('Developer', channel, developerResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: developerResponse.response },
+        },
+      ], startMessage?.ts);
+    });
+
+    // Step 6: Developer invokes Claude Code CLI for actual implementation
+    const codeResult = await step.run('developer-invoke-claude-code-sprint', async () => {
+      await postAsRole('Developer', channel, 'Starting autonomous implementation...', [
         {
           type: 'section',
           text: {
@@ -3056,7 +3184,7 @@ IMPORTANT: This is human-approved. Proceed with implementation planning - no fur
       ], startMessage?.ts);
 
       try {
-        const codePrompt = await buildRolePrompt(projectPath, 'implementer', `
+        const codePrompt = await buildRolePrompt(projectPath, 'developer', `
 ## Sprint ${sprintNumber} Implementation
 
 ${enhancedContext}
@@ -3078,7 +3206,7 @@ IMPORTANT: This is autonomous implementation. Proceed - no human approval needed
         const result = await invokeClaudeCode({
           projectPath,
           prompt: codePrompt,
-          role: 'implementer',
+          role: 'developer',
           timeout: 600000, // 10 minutes
         });
 
@@ -3101,7 +3229,7 @@ IMPORTANT: This is autonomous implementation. Proceed - no human approval needed
           ? codeResult.output.substring(codeResult.output.length - 1500)
           : codeResult.output;
 
-        return postAsRole('Implementer', channel, 'Sprint implementation completed', [
+        return postAsRole('Developer', channel, 'Sprint implementation completed', [
           {
             type: 'section',
             text: {
@@ -3111,7 +3239,7 @@ IMPORTANT: This is autonomous implementation. Proceed - no human approval needed
           },
         ], startMessage?.ts);
       } else {
-        return postAsRole('Implementer', channel, 'Implementation encountered issues', [
+        return postAsRole('Developer', channel, 'Implementation encountered issues', [
           {
             type: 'section',
             text: {
@@ -3123,7 +3251,7 @@ IMPORTANT: This is autonomous implementation. Proceed - no human approval needed
       }
     });
 
-    console.log(`[Sprint] Sprint ${sprintNumber} of ${projectName} approved - Implementation ${codeResult.success ? 'completed' : 'had issues'}`);
+    console.log(`[Sprint] Sprint ${sprintNumber} of ${projectName} approved - Developer implementation ${codeResult.success ? 'completed' : 'had issues'}`);
 
     return {
       success: true,
