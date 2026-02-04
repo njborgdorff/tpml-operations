@@ -2573,20 +2573,116 @@ Make a CLEAR DECISION: Either PASS the tests, or document BUGS FOUND with specif
         ], kickoffMessage?.ts);
       });
 
-      // Step 12: Analyze QA's decision
-      const qaDecision = await step.run(`analyze-qa-decision${iterSuffix}`, async () => {
-        return analyzeRoleDecision('QA', qaResponse.response);
+      // Step 11b: Request human QA verification
+      // AI can suggest what to test, but human must actually verify
+      await step.run(`request-human-qa-verification${iterSuffix}`, async () => {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+
+        // Get the dev server URL if available
+        const sprint = await prisma.sprint.findFirst({
+          where: { projectId, number: sprintNumber },
+          select: { devServerUrl: true },
+        });
+
+        const devServerSection = sprint?.devServerUrl
+          ? `\n\n🔗 *Test the application:* <${sprint.devServerUrl}|Open Dev Server>`
+          : '\n\n_No dev server URL configured. Check with DevOps for testing environment._';
+
+        return postAsRole('QA', channel, 'Human QA verification required', [
+          {
+            type: 'header',
+            text: { type: 'plain_text', text: '🧪 Human QA Verification Required', emoji: true },
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `The AI QA has completed their testing analysis above.\n\n*Now a human needs to verify the implementation actually works:*\n• Test the features manually${devServerSection}\n• Verify acceptance criteria are met\n• Check for edge cases and bugs`,
+            },
+          },
+          {
+            type: 'divider',
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*After testing, confirm the results:*`,
+            },
+          },
+          {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '✅ QA Verified - All Good', emoji: true },
+                style: 'primary',
+                url: `${baseUrl}/api/workflow/qa-verify?projectId=${projectId}&sprintNumber=${sprintNumber}&verified=true`,
+              },
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '🐛 Issues Found', emoji: true },
+                style: 'danger',
+                url: `${baseUrl}/api/workflow/qa-verify?projectId=${projectId}&sprintNumber=${sprintNumber}&verified=false`,
+              },
+            ],
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Workflow paused - waiting for human verification_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
       });
 
-      if (!qaDecision.approved) {
-        // QA found bugs - loop back to Implementer
-        await step.run(`qa-finds-bugs${iterSuffix}`, async () => {
-          return postAsRole('QA', channel, 'Bugs found', [
+      // Step 11c: Wait for human QA verification
+      const humanQaResult = await step.waitForEvent(`wait-human-qa-verification${iterSuffix}`, {
+        event: 'qa/verified',
+        timeout: '24h', // Give humans time to test
+        match: 'data.projectId',
+      });
+
+      // Step 12: Process human QA decision
+      const qaDecision = {
+        approved: humanQaResult?.data?.verified === true,
+        issues: humanQaResult?.data?.issuesFound || '',
+      };
+
+      if (!humanQaResult) {
+        // Timeout - no human verification received
+        await step.run(`qa-timeout${iterSuffix}`, async () => {
+          return postAsRole('QA', channel, 'QA verification timeout', [
             {
               type: 'section',
               text: {
                 type: 'mrkdwn',
-                text: `🐛 *Bugs Found*\n\n${qaDecision.issues || 'Please fix the issues mentioned above.'}\n\nSending back to Implementer for fixes.`,
+                text: `⏰ *QA Verification Timeout*\n\nNo human verification received within 24 hours. Please click the verification buttons above or manually trigger QA verification.`,
+              },
+            },
+          ], kickoffMessage?.ts);
+        });
+
+        // Continue waiting or exit - for now we'll exit the workflow
+        return {
+          success: false,
+          projectId,
+          projectName,
+          error: 'QA verification timeout',
+          iterations: iteration,
+          messageTs: kickoffMessage?.ts,
+        };
+      }
+
+      if (!qaDecision.approved) {
+        // Human found issues - loop back to Implementer
+        await step.run(`qa-finds-bugs${iterSuffix}`, async () => {
+          return postAsRole('QA', channel, 'Issues reported by human tester', [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: `🐛 *Issues Found by Human Tester*\n\n${qaDecision.issues || 'Human tester found issues during manual testing.'}\n\nSending back to Implementer for fixes.`,
               },
             },
             {
