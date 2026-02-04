@@ -12,7 +12,9 @@ import { serve } from 'inngest/next';
 import { Inngest } from 'inngest';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaClient } from '@prisma/client';
-import { invokeClaudeCode, buildRolePrompt } from '@/lib/orchestration/claude-code';
+
+// Note: invokeClaudeCode uses child_process which doesn't work on Vercel serverless
+// CLI invocation happens via local worker or is triggered separately
 
 // Create Inngest client
 const inngest = new Inngest({ id: 'tpml-code-team' });
@@ -2167,72 +2169,36 @@ Keep your response focused on architecture validation. Be concise but thorough.`
         ], kickoffMessage?.ts);
       });
 
-      // Actually invoke Claude CLI to write code
-      const cliResult = await step.run(`invoke-claude-cli${iterSuffix}`, async () => {
-        if (!projectPath) {
-          return {
-            success: false,
-            output: 'No project path specified - skipping CLI invocation',
-            exitCode: null,
-            duration: 0,
-          };
-        }
-
-        const implementerPrompt = await buildRolePrompt(projectPath, 'implementer', `
-Project: ${projectName}
-Sprint: ${sprintNumber}
-${iteration > 1 ? `\n## Previous Feedback to Address\n${currentImplementation}` : ''}
-
-## Your Task
-${iteration === 1
-  ? `Implement Sprint ${sprintNumber} features according to the handoff document.`
-  : `Address the feedback from the previous review and fix the issues mentioned.`}
-
-Important:
-- Write actual working code
-- Follow the architecture patterns in ARCHITECTURE.md
-- Create tests for your implementation
-- Commit your changes with descriptive messages
-- When done, provide a summary of what you implemented
-`);
-
-        return invokeClaudeCode({
-          projectPath,
-          prompt: implementerPrompt,
-          role: 'implementer',
-          timeout: 600000, // 10 minutes
+      // Emit event for local worker to invoke Claude CLI
+      // (CLI invocation can't run on Vercel serverless - needs local worker)
+      await step.run(`emit-cli-event${iterSuffix}`, async () => {
+        await inngest.send({
+          name: 'implementer/cli_requested',
+          data: {
+            projectId,
+            projectName,
+            projectPath,
+            sprintNumber,
+            iteration,
+            previousFeedback: iteration > 1 ? currentImplementation : null,
+          },
         });
+        return { emitted: true };
       });
 
-      // Post CLI result summary
-      await step.run(`post-cli-result${iterSuffix}`, async () => {
-        if (cliResult.success) {
-          return postAsRole('Implementer', channel, 'Claude CLI completed', [
-            {
-              type: 'section',
-              text: {
-                type: 'mrkdwn',
-                text: `✅ *Claude CLI Completed*\n\nImplementation finished in ${Math.round(cliResult.duration / 1000)}s.\n\n*Summary:*\n${cliResult.output.substring(0, 1000)}${cliResult.output.length > 1000 ? '...' : ''}`,
-              },
+      // Post CLI instructions
+      await step.run(`post-cli-instructions${iterSuffix}`, async () => {
+        const cliCommand = `cd "${projectPath}" && claude`;
+        return postAsRole('Implementer', channel, 'Ready for implementation', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `💻 *Ready for Implementation*\n\nTo write code for Sprint ${sprintNumber}, run Claude CLI:\n\n\`\`\`${cliCommand}\`\`\`\n\n_A local worker will pick this up automatically if configured, or run manually._`,
             },
-          ], kickoffMessage?.ts);
-        } else {
-          return postAsRole('Implementer', channel, 'Claude CLI encountered issues', [
-            {
-              type: 'section',
-              text: {
-                type: 'mrkdwn',
-                text: `⚠️ *Claude CLI Issues*\n\n${cliResult.error || 'Unknown error'}\n\nProceeding with review anyway...`,
-              },
-            },
-          ], kickoffMessage?.ts);
-        }
+          },
+        ], kickoffMessage?.ts);
       });
-
-      // Update current implementation with CLI output
-      if (cliResult.success && cliResult.output) {
-        currentImplementation = cliResult.output;
-      }
 
       // Signal handoff to Reviewer
       await step.run(`implementer-handoff${iterSuffix}`, async () => {
