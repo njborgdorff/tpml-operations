@@ -202,6 +202,31 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
     }
   };
 
+  // Approve sprint and trigger workflow (calls the approve endpoint)
+  const handleSprintApprove = async (sprintId: string, sprintNumber: number) => {
+    setIsUpdating(true);
+    try {
+      const response = await fetch(`/api/sprints/${sprintId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Approval failed');
+      }
+
+      toast.success(`Sprint ${sprintNumber} approved! AI workflow starting...`);
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Approval failed');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const completedSprintsList = sprints.filter(s => s.status === 'COMPLETED');
   const sprintAwaitingApproval = sprints.find(s => s.status === 'AWAITING_APPROVAL');
   const hasCompletedSprints = completedSprintsList.length > 0;
@@ -416,14 +441,14 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
               )}
             </div>
             <Button
-              onClick={() => handleSprintUpdate(sprintAwaitingApproval.id, 'IN_PROGRESS')}
+              onClick={() => handleSprintApprove(sprintAwaitingApproval.id, sprintAwaitingApproval.number)}
               disabled={isUpdating}
               className="bg-amber-600 hover:bg-amber-700"
             >
               {isUpdating ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  Starting...
+                  Starting workflow...
                 </>
               ) : (
                 <>

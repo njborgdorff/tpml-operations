@@ -2754,23 +2754,55 @@ Keep your response focused on deployment preparation. Be concise but thorough.`;
       };
     }
 
-    // Update sprint status to AWAITING_APPROVAL (human gate)
-    await step.run('update-sprint-status', async () => {
-      const sprint = await prisma.sprint.findFirst({
+    // Complete current sprint and set next sprint to AWAITING_APPROVAL
+    const nextSprintInfo = await step.run('complete-sprint-setup-next', async () => {
+      // Find and complete current sprint
+      const currentSprint = await prisma.sprint.findFirst({
         where: { projectId, number: sprintNumber },
       });
 
-      if (sprint) {
+      if (currentSprint) {
         await prisma.sprint.update({
-          where: { id: sprint.id },
-          data: { status: 'REVIEW' },
+          where: { id: currentSprint.id },
+          data: {
+            status: 'COMPLETED',
+            completedAt: new Date(),
+          },
         });
       }
+
+      // Find next sprint and set to AWAITING_APPROVAL
+      const nextSprint = await prisma.sprint.findFirst({
+        where: { projectId, number: sprintNumber + 1 },
+      });
+
+      if (nextSprint) {
+        await prisma.sprint.update({
+          where: { id: nextSprint.id },
+          data: { status: 'AWAITING_APPROVAL' },
+        });
+
+        return {
+          hasNext: true,
+          nextSprintId: nextSprint.id,
+          nextSprintNumber: nextSprint.number,
+          nextSprintName: nextSprint.name,
+          nextSprintGoal: nextSprint.goal,
+        };
+      }
+
+      // No more sprints - mark project complete
+      await prisma.project.update({
+        where: { id: projectId },
+        data: { status: 'COMPLETED' },
+      });
+
+      return { hasNext: false };
     });
 
-    // PM announces sprint ready for approval with files summary
+    // PM announces sprint completion with next steps
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    await step.run('announce-ready-for-approval', async () => {
+    await step.run('announce-sprint-complete', async () => {
       const project = await prisma.project.findUnique({
         where: { id: projectId },
         select: { slug: true },
@@ -2781,42 +2813,82 @@ Keep your response focused on deployment preparation. Be concise but thorough.`;
         ? `\n\n📁 *Files Modified (${allFilesModified.length}):*\n${allFilesModified.slice(0, 10).map(f => `• \`${f}\``).join('\n')}${allFilesModified.length > 10 ? `\n_...and ${allFilesModified.length - 10} more_` : ''}`
         : '';
 
-      return postAsRole('PM', channel, 'Sprint ready for human approval', [
-        {
-          type: 'header',
-          text: { type: 'plain_text', text: '🎯 Sprint Ready for Approval', emoji: true },
-        },
-        {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) has completed the bot workflow:\n\n✅ Implementation complete\n✅ Code review passed\n✅ QA testing passed${iteration > 1 ? `\n\n_Completed in ${iteration} iteration(s)_` : ''}${filesSummary}\n\n*Human approval is now required to proceed.*`,
+      if (nextSprintInfo.hasNext && 'nextSprintId' in nextSprintInfo) {
+        // More sprints to do - show approval buttons for next sprint
+        const { nextSprintId, nextSprintNumber, nextSprintName, nextSprintGoal } = nextSprintInfo;
+        return postAsRole('PM', channel, 'Sprint complete - next sprint ready', [
+          {
+            type: 'header',
+            text: { type: 'plain_text', text: '✅ Sprint Complete!', emoji: true },
           },
-        },
-        {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: `📋 *View full implementation details in the dashboard* - all changes have been stored as artifacts for your review.`,
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) is complete!\n\n✅ Implementation complete\n✅ Code review passed\n✅ QA testing passed${iteration > 1 ? `\n\n_Completed in ${iteration} iteration(s)_` : ''}${filesSummary}`,
+            },
           },
-        },
-        {
-          type: 'actions',
-          elements: [
-            {
-              type: 'button',
-              text: { type: 'plain_text', text: '📄 View Implementation', emoji: true },
-              url: `${baseUrl}/projects/${project?.slug || projectId}?tab=artifacts`,
+          {
+            type: 'divider',
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `🎯 *Next Up:* Sprint ${nextSprintNumber} - ${nextSprintName || 'Upcoming Sprint'}\n${nextSprintGoal ? `*Goal:* ${nextSprintGoal}` : ''}\n\n⏳ *Human approval required to start Sprint ${nextSprintNumber}*`,
             },
-            {
-              type: 'button',
-              text: { type: 'plain_text', text: '✅ Approve Sprint', emoji: true },
-              style: 'primary',
-              url: `${baseUrl}/projects/${project?.slug || projectId}`,
+          },
+          {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '📄 View Implementation', emoji: true },
+                url: `${baseUrl}/projects/${project?.slug || projectId}?tab=artifacts`,
+              },
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '✅ Approve & Start Next Sprint', emoji: true },
+                style: 'primary',
+                action_id: `sprint_approve_${nextSprintId}`,
+                value: JSON.stringify({ sprintId: nextSprintId, projectId, action: 'approve' }),
+              },
+            ],
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Sprint ${nextSprintNumber} is AWAITING_APPROVAL_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      } else {
+        // Project complete!
+        return postAsRole('PM', channel, 'Project complete!', [
+          {
+            type: 'header',
+            text: { type: 'plain_text', text: '🎉 Project Complete!', emoji: true },
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*${projectName}* - All sprints have been completed!\n\nSprint ${sprintNumber} (${sprintName}) was the final sprint.\n\n✅ Implementation complete\n✅ Code review passed\n✅ QA testing passed${iteration > 1 ? `\n\n_Completed in ${iteration} iteration(s)_` : ''}${filesSummary}`,
             },
-          ],
-        },
-      ], kickoffMessage?.ts);
+          },
+          {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '📄 View Project', emoji: true },
+                style: 'primary',
+                url: `${baseUrl}/projects/${project?.slug || projectId}`,
+              },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      }
     });
 
     console.log(`[Kickoff] Project ${projectName} workflow complete in ${iteration} iteration(s) - awaiting human approval`);
