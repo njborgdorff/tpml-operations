@@ -2567,7 +2567,7 @@ ${fixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`).jo
             }
           });
 
-          allFilesModified = [...new Set([...allFilesModified, ...fixResult.filesModified])];
+          allFilesModified = Array.from(new Set([...allFilesModified, ...fixResult.filesModified]));
         }
 
         await step.run(`post-implementer-fix${iterSuffix}`, async () => {
@@ -2869,7 +2869,7 @@ ${bugfixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`)
             }
           });
 
-          allFilesModified = [...new Set([...allFilesModified, ...bugfixResult.filesModified])];
+          allFilesModified = Array.from(new Set([...allFilesModified, ...bugfixResult.filesModified]));
         }
 
         await step.run(`post-implementer-bugfix${iterSuffix}`, async () => {
