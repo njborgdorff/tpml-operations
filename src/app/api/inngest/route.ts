@@ -16,7 +16,7 @@ import { invokeClaudeCode, buildRolePrompt } from '@/lib/orchestration/claude-co
 
 // Retry configuration for resilient autonomous workflows
 const WORKFLOW_RETRY_CONFIG = {
-  retries: 3,
+  retries: 3 as const,
   backoff: {
     type: 'exponential' as const,
     minDelay: 2000,  // 2 seconds
