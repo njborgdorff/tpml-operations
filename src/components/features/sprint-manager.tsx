@@ -25,6 +25,7 @@ import {
   ChevronDown,
   ChevronUp,
   UserCheck,
+  Rocket,
 } from 'lucide-react';
 
 interface Sprint {
@@ -272,6 +273,41 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
     }
   };
 
+  // Deploy handler - triggers deployment of pending changes
+  const [isDeploying, setIsDeploying] = useState(false);
+
+  const handleDeploy = async () => {
+    setIsDeploying(true);
+    try {
+      const response = await fetch('/api/deploy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (data.manualSteps) {
+          toast.error('Deployment not configured', {
+            description: data.manualSteps[0],
+          });
+        } else {
+          throw new Error(data.error || 'Deployment failed');
+        }
+        return;
+      }
+
+      toast.success(`Deployment triggered via ${data.method}`, {
+        description: data.message,
+      });
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Deployment failed');
+    } finally {
+      setIsDeploying(false);
+    }
+  };
 
   const completedSprintsList = sprints.filter(s => s.status === 'COMPLETED');
   const sprintAwaitingApproval = sprints.find(s => s.status === 'AWAITING_APPROVAL');
@@ -279,6 +315,40 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
 
   return (
     <div className="space-y-6">
+      {/* Deploy Button - Always visible for quick deployment */}
+      <Card className="border-orange-200 bg-gradient-to-r from-orange-50 to-amber-50">
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Rocket className="h-5 w-5 text-orange-600" />
+              <div>
+                <p className="font-medium">Deploy Changes</p>
+                <p className="text-sm text-muted-foreground">
+                  Push pending code changes to production
+                </p>
+              </div>
+            </div>
+            <Button
+              onClick={handleDeploy}
+              disabled={isDeploying}
+              className="bg-orange-600 hover:bg-orange-700"
+            >
+              {isDeploying ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Deploying...
+                </>
+              ) : (
+                <>
+                  <Rocket className="h-4 w-4 mr-2" />
+                  Deploy Now
+                </>
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Kickoff Section - Show when approved but not started */}
       {canKickoff && (
         <Card className="border-green-200 bg-gradient-to-r from-green-50 to-emerald-50">
