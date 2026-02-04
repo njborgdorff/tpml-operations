@@ -2170,8 +2170,98 @@ Keep your response focused on architecture validation. Be concise but thorough.`
         ], kickoffMessage?.ts);
       });
 
-      // Emit event for local worker to invoke Claude CLI
-      // (CLI invocation can't run on Vercel serverless - needs local worker)
+      // Generate implementation INLINE using Claude API
+      // This eliminates coordination issues between separate Inngest functions
+      const implementationResult = await step.run(`generate-implementation${iterSuffix}`, async () => {
+        const iterationContext = iteration > 1 && currentImplementation
+          ? `\n\n## Previous Feedback to Address\n\n${currentImplementation}`
+          : '';
+
+        const implementationPrompt = `You are the Implementer for TPML (Total Product Management, Ltd.).
+
+## Your Task
+Implement Sprint ${sprintNumber} (${sprintName}) for project "${projectName}" based on the handoff document below.
+
+## Handoff Document
+${handoffContent || 'No handoff document provided'}
+${iterationContext}
+
+## Instructions
+1. Analyze the requirements from the handoff
+2. Plan the implementation approach
+3. List specific files you would create/modify
+4. Provide code snippets for key implementations
+5. Document any assumptions or decisions made
+
+## Output Format
+Provide a structured implementation report:
+
+### Implementation Summary
+[Brief overview of what was implemented]
+
+### Files Modified/Created
+- List each file with a brief description
+
+### Key Code Changes
+\`\`\`typescript
+// Show important code snippets with explanations
+\`\`\`
+
+### Testing Notes
+[What tests were added/modified]
+
+### Next Steps
+[Any remaining work or handoff notes]
+
+Be specific and detailed. This output will be reviewed by the Reviewer role.`;
+
+        const anthropic = new Anthropic({
+          apiKey: process.env.ANTHROPIC_API_KEY,
+        });
+
+        const response = await anthropic.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          messages: [{ role: 'user', content: implementationPrompt }],
+        });
+
+        const content = response.content[0];
+        const implementationText = content.type === 'text' ? content.text : 'Implementation generated';
+
+        // Parse files from the implementation text
+        const fileMatches = implementationText.match(/[-*]\s+`?([a-zA-Z0-9_\-./]+\.[a-zA-Z]+)`?/g) || [];
+        const filesFromOutput = fileMatches
+          .map(m => m.replace(/^[-*]\s+`?/, '').replace(/`?$/, ''))
+          .filter(f => f.includes('.'))
+          .slice(0, 20);
+
+        return {
+          output: implementationText,
+          filesModified: filesFromOutput,
+        };
+      });
+
+      // Post implementation progress
+      await step.run(`post-implementation-progress${iterSuffix}`, async () => {
+        const preview = implementationResult.output.substring(0, 800);
+        return postAsRole('Implementer', channel, 'Implementation in progress', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `⚙️ *Implementation Progress (Iteration ${iteration})*\n\n${preview}${implementationResult.output.length > 800 ? '...' : ''}`,
+            },
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Full implementation: ${implementationResult.output.length} characters | Files: ${implementationResult.filesModified.length}_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
+
+      // Also emit event for external CLI workers (optional - they can enhance the implementation)
       await step.run(`emit-worker-event${iterSuffix}`, async () => {
         await inngest.send({
           name: 'worker/implementation.start',
@@ -2185,7 +2275,6 @@ Keep your response focused on architecture validation. Be concise but thorough.`
             handoffContent,
             iteration,
             previousFeedback: iteration > 1 ? currentImplementation : null,
-            // Thread context for Slack continuity
             channel,
             threadTs: kickoffMessage?.ts,
           },
@@ -2193,64 +2282,18 @@ Keep your response focused on architecture validation. Be concise but thorough.`
         return { emitted: true };
       });
 
-      // Post worker notification
-      await step.run(`post-worker-notification${iterSuffix}`, async () => {
-        return postAsRole('Implementer', channel, 'Implementation started on worker', [
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: `🔨 *Implementation Started*\n\nWorker has been notified to start Sprint ${sprintNumber} implementation.\n\n_Project path: ${projectPath}_\n_Waiting for worker to complete..._`,
-            },
-          },
-        ], kickoffMessage?.ts);
-      });
-
-      // Wait for worker to complete implementation (with 30 minute timeout)
-      // The worker will send 'worker/implementation.complete' when done
-      const workerResult = await step.waitForEvent(`wait-for-worker${iterSuffix}`, {
-        event: 'worker/implementation.complete',
-        timeout: '30m',
-        match: 'data.projectId',
-      });
-
-      // Check if worker timed out or failed
-      if (!workerResult) {
-        await step.run(`worker-timeout${iterSuffix}`, async () => {
-          return postAsRole('Implementer', channel, 'Worker timeout', [
-            {
-              type: 'section',
-              text: {
-                type: 'mrkdwn',
-                text: `⚠️ *Implementation Timeout*\n\nThe worker did not complete within 30 minutes. Please check the worker status and retry.\n\n_Project: ${projectName}, Sprint ${sprintNumber}_`,
-              },
-            },
-          ], kickoffMessage?.ts);
-        });
-
-        return {
-          success: false,
-          projectId,
-          projectName,
-          error: 'Worker implementation timed out',
-        };
-      }
-
-      // Extract implementation result from worker
-      const implementationOutput = workerResult.data?.output || workerResult.data?.summary || 'Implementation completed (no details provided)';
-      const codeChanges = workerResult.data?.codeChanges || workerResult.data?.changes || '';
-      const filesModified: string[] = workerResult.data?.filesModified || [];
+      // Use the inline implementation result (no waiting for external worker)
+      const implementationOutput = implementationResult.output;
+      const filesModified: string[] = implementationResult.filesModified;
 
       // Accumulate files modified across all iterations (deduplicated)
       const combinedFiles = allFilesModified.concat(filesModified);
       allFilesModified = combinedFiles.filter((file, index) => combinedFiles.indexOf(file) === index);
 
-      // Update currentImplementation with actual worker output
+      // Update currentImplementation with inline result
       currentImplementation = `## Implementation Output
 
 ${implementationOutput}
-
-${codeChanges ? `## Code Changes\n\n${codeChanges}` : ''}
 
 ${filesModified.length > 0 ? `## Files Modified\n\n${filesModified.map((f: string) => `- ${f}`).join('\n')}` : ''}`;
 
@@ -2274,12 +2317,6 @@ ${implementationOutput}
 ## Files Modified (${filesModified.length} files)
 
 ${filesModified.length > 0 ? filesModified.map(f => `- \`${f}\``).join('\n') : '_No files listed_'}
-
----
-
-## Code Changes
-
-${codeChanges || '_See implementation summary above_'}
 
 ---
 
