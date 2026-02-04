@@ -2170,69 +2170,51 @@ Briefly confirm what you'll be implementing, then proceed with coding.`,
       ], kickoffMessage?.ts);
     });
 
-    // Step 5d: Developer invokes Claude Code CLI to actually implement the code
-    const codeResult = await step.run('developer-invoke-claude-code-cli', async () => {
-      await postAsRole('Developer', channel, 'Starting autonomous implementation...', [
+    // Step 5d: Developer invokes Claude Code CLI via worker service
+    await step.run('developer-notify-starting', async () => {
+      return postAsRole('Developer', channel, 'Starting autonomous implementation...', [
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `🛠️ *Starting Autonomous Coding*\n\nInvoking Claude Code CLI to implement Sprint ${sprintNumber} features...\n\n_Project path: \`${effectiveProjectPath}\`_`,
+            text: `🛠️ *Starting Autonomous Coding*\n\nSending implementation request to worker service for Sprint ${sprintNumber}...\n\n_Project: \`${projectSlug}\`_`,
           },
         },
       ], kickoffMessage?.ts);
-
-      try {
-        // Build role-specific prompt with handoff context
-        const codePrompt = await buildRolePrompt(effectiveProjectPath, 'developer', `
-## Sprint ${sprintNumber} Implementation
-
-## Implementer's Plan
-${implementerResponse.response}
-
-## Original Handoff
-${handoffContent}
-
-## Your Task
-
-Implement the Sprint ${sprintNumber} features as outlined by the Implementer above.
-
-1. Read existing code structure in the project
-2. Implement the required features following existing patterns
-3. Write appropriate tests for new functionality
-4. Create meaningful git commits as you work
-5. When done, create a summary of what you implemented
-
-IMPORTANT: This is autonomous implementation. Proceed with coding - no human approval needed until sprint review.
-`);
-
-        // Invoke Claude Code CLI
-        const result = await invokeClaudeCode({
-          projectPath: effectiveProjectPath,
-          prompt: codePrompt,
-          role: 'developer',
-          timeout: 600000, // 10 minutes for implementation
-        });
-
-        return {
-          success: result.success,
-          output: result.output,
-          duration: result.duration,
-          exitCode: result.exitCode,
-          error: result.error,
-        };
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        console.error(`[Kickoff] Claude Code CLI failed: ${errorMessage}`);
-        return {
-          success: false,
-          output: '',
-          duration: 0,
-          exitCode: -1,
-          error: errorMessage,
-        };
-      }
     });
+
+    // Send implementation request to worker
+    await step.run('send-to-worker', async () => {
+      await inngest.send({
+        name: 'worker/implementation.start',
+        data: {
+          projectId,
+          projectSlug,
+          projectPath: `/root/projects/${projectSlug}`,
+          sprintNumber,
+          sprintName: `Sprint ${sprintNumber}`,
+          handoffContent: `## Implementer's Plan\n${implementerResponse.response}\n\n## Original Handoff\n${handoffContent}`,
+          backlogContent: '',
+          architectureContent: '',
+        },
+      });
+    });
+
+    // Wait for worker to complete implementation (timeout: 15 minutes)
+    const workerResult = await step.waitForEvent('wait-for-implementation', {
+      event: 'worker/implementation.complete',
+      match: 'data.projectId',
+      timeout: '15m',
+    });
+
+    // Process worker result
+    const codeResult = {
+      success: workerResult?.data?.success ?? false,
+      output: workerResult?.data?.summary ?? '',
+      duration: workerResult?.data?.duration ?? 0,
+      error: workerResult?.data?.error,
+      filesChanged: workerResult?.data?.filesChanged ?? [],
+    };
 
     // Post Claude Code results
     await step.run('post-code-result', async () => {
@@ -2406,55 +2388,47 @@ IMPORTANT:
           ], kickoffMessage?.ts);
         });
 
-        // Now invoke Claude Code CLI to actually make the fixes
-        const fixCodeResult = await step.run(`developer-invoke-claude-code-fix${iterSuffix}`, async () => {
-          await postAsRole('Developer', channel, 'Implementing fixes with Claude Code CLI...', [
+        // Now invoke Claude Code CLI via worker to actually make the fixes
+        await step.run(`developer-notify-fix${iterSuffix}`, async () => {
+          return postAsRole('Developer', channel, 'Implementing fixes via worker service...', [
             {
               type: 'section',
               text: {
                 type: 'mrkdwn',
-                text: `🔧 *Implementing Fixes (Iteration ${iteration})*\n\nInvoking Claude Code CLI to address reviewer feedback...`,
+                text: `🔧 *Implementing Fixes (Iteration ${iteration})*\n\nSending fix request to worker service...`,
               },
             },
           ], kickoffMessage?.ts);
-
-          try {
-            const fixPrompt = await buildRolePrompt(effectiveProjectPath, 'developer', `
-## Reviewer Feedback to Address
-
-${reviewerResponse.response}
-
-## Specific Issues
-${reviewDecision.issues || 'See reviewer feedback above'}
-
-## Your Task
-Fix the issues identified by the Reviewer:
-1. Read the code that needs to be fixed
-2. Make the necessary changes to address each issue
-3. Ensure your fixes don't introduce new problems
-4. Commit your changes with clear messages
-
-IMPORTANT: This is autonomous fixing. Proceed with implementing fixes - no human approval needed.
-`);
-
-            const result = await invokeClaudeCode({
-              projectPath: effectiveProjectPath,
-              prompt: fixPrompt,
-              role: 'developer',
-              timeout: 300000, // 5 minutes for fixes
-            });
-
-            return {
-              success: result.success,
-              output: result.output,
-              duration: result.duration,
-              error: result.error,
-            };
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            return { success: false, output: '', duration: 0, error: errorMessage };
-          }
         });
+
+        // Send fix request to worker
+        await step.run(`send-fix-to-worker${iterSuffix}`, async () => {
+          await inngest.send({
+            name: 'worker/implementation.start',
+            data: {
+              projectId,
+              projectSlug,
+              projectPath: `/root/projects/${projectSlug}`,
+              sprintNumber,
+              sprintName: `Sprint ${sprintNumber} - Fix ${iteration}`,
+              handoffContent: `## Reviewer Feedback to Address\n\n${reviewerResponse.response}\n\n## Specific Issues\n${reviewDecision.issues || 'See reviewer feedback above'}\n\n## Task: Fix the issues identified by the Reviewer`,
+            },
+          });
+        });
+
+        // Wait for worker to complete fixes
+        const fixWorkerResult = await step.waitForEvent(`wait-for-fix${iterSuffix}`, {
+          event: 'worker/implementation.complete',
+          match: 'data.projectId',
+          timeout: '10m',
+        });
+
+        const fixCodeResult = {
+          success: fixWorkerResult?.data?.success ?? false,
+          output: fixWorkerResult?.data?.summary ?? '',
+          duration: fixWorkerResult?.data?.duration ?? 0,
+          error: fixWorkerResult?.data?.error,
+        };
 
         // Post fix results
         await step.run(`post-fix-result${iterSuffix}`, async () => {
@@ -2639,55 +2613,47 @@ IMPORTANT:
           ], kickoffMessage?.ts);
         });
 
-        // Now invoke Claude Code CLI to actually fix the bugs
-        const bugfixCodeResult = await step.run(`developer-invoke-claude-code-bugfix${iterSuffix}`, async () => {
-          await postAsRole('Developer', channel, 'Fixing bugs with Claude Code CLI...', [
+        // Now invoke Claude Code CLI via worker to actually fix the bugs
+        await step.run(`developer-notify-bugfix${iterSuffix}`, async () => {
+          return postAsRole('Developer', channel, 'Fixing bugs via worker service...', [
             {
               type: 'section',
               text: {
                 type: 'mrkdwn',
-                text: `🐛 *Fixing Bugs (Iteration ${iteration})*\n\nInvoking Claude Code CLI to address QA findings...`,
+                text: `🐛 *Fixing Bugs (Iteration ${iteration})*\n\nSending bugfix request to worker service...`,
               },
             },
           ], kickoffMessage?.ts);
-
-          try {
-            const bugfixPrompt = await buildRolePrompt(effectiveProjectPath, 'developer', `
-## QA Bug Report to Address
-
-${qaResponse.response}
-
-## Specific Bugs
-${qaDecision.issues || 'See QA report above'}
-
-## Your Task
-Fix ALL bugs identified by QA:
-1. Understand each bug from the QA report
-2. Locate and fix the problematic code
-3. Add tests to prevent regression
-4. Commit your fixes with clear messages
-
-IMPORTANT: This is autonomous bug fixing. Fix all issues - no human approval needed.
-`);
-
-            const result = await invokeClaudeCode({
-              projectPath: effectiveProjectPath,
-              prompt: bugfixPrompt,
-              role: 'developer',
-              timeout: 300000, // 5 minutes for bug fixes
-            });
-
-            return {
-              success: result.success,
-              output: result.output,
-              duration: result.duration,
-              error: result.error,
-            };
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            return { success: false, output: '', duration: 0, error: errorMessage };
-          }
         });
+
+        // Send bugfix request to worker
+        await step.run(`send-bugfix-to-worker${iterSuffix}`, async () => {
+          await inngest.send({
+            name: 'worker/implementation.start',
+            data: {
+              projectId,
+              projectSlug,
+              projectPath: `/root/projects/${projectSlug}`,
+              sprintNumber,
+              sprintName: `Sprint ${sprintNumber} - Bugfix ${iteration}`,
+              handoffContent: `## QA Bug Report to Address\n\n${qaResponse.response}\n\n## Specific Bugs\n${qaDecision.issues || 'See QA report above'}\n\n## Task: Fix ALL bugs identified by QA`,
+            },
+          });
+        });
+
+        // Wait for worker to complete bugfixes
+        const bugfixWorkerResult = await step.waitForEvent(`wait-for-bugfix${iterSuffix}`, {
+          event: 'worker/implementation.complete',
+          match: 'data.projectId',
+          timeout: '10m',
+        });
+
+        const bugfixCodeResult = {
+          success: bugfixWorkerResult?.data?.success ?? false,
+          output: bugfixWorkerResult?.data?.summary ?? '',
+          duration: bugfixWorkerResult?.data?.duration ?? 0,
+          error: bugfixWorkerResult?.data?.error,
+        };
 
         // Post bugfix results
         await step.run(`post-bugfix-result${iterSuffix}`, async () => {
@@ -3171,56 +3137,51 @@ Briefly confirm what you'll be implementing, then proceed with coding.`,
       ], startMessage?.ts);
     });
 
-    // Step 6: Developer invokes Claude Code CLI for actual implementation
-    const codeResult = await step.run('developer-invoke-claude-code-sprint', async () => {
-      await postAsRole('Developer', channel, 'Starting autonomous implementation...', [
+    // Step 6: Developer invokes Claude Code CLI via worker service
+    await step.run('developer-notify-starting-sprint', async () => {
+      return postAsRole('Developer', channel, 'Starting autonomous implementation...', [
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `🛠️ *Starting Sprint ${sprintNumber} Implementation*\n\nInvoking Claude Code CLI...\n\n_Project path: \`${projectPath}\`_`,
+            text: `🛠️ *Starting Sprint ${sprintNumber} Implementation*\n\nSending implementation request to worker service...\n\n_Project: \`${projectSlug || projectId}\`_`,
           },
         },
       ], startMessage?.ts);
-
-      try {
-        const codePrompt = await buildRolePrompt(projectPath, 'developer', `
-## Sprint ${sprintNumber} Implementation
-
-${enhancedContext}
-
-## Implementer's Plan
-${implementerResponse.response}
-
-## Your Task
-Implement Sprint ${sprintNumber} features:
-1. Read existing code structure
-2. Implement features per the backlog and plan
-3. Write tests for new functionality
-4. Create meaningful git commits
-5. Summarize what you implemented
-
-IMPORTANT: This is autonomous implementation. Proceed - no human approval needed until sprint review.
-`);
-
-        const result = await invokeClaudeCode({
-          projectPath,
-          prompt: codePrompt,
-          role: 'developer',
-          timeout: 600000, // 10 minutes
-        });
-
-        return {
-          success: result.success,
-          output: result.output,
-          duration: result.duration,
-          error: result.error,
-        };
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        return { success: false, output: '', duration: 0, error: errorMessage };
-      }
     });
+
+    // Send implementation request to worker
+    await step.run('send-to-worker-sprint', async () => {
+      await inngest.send({
+        name: 'worker/implementation.start',
+        data: {
+          projectId,
+          projectSlug: projectSlug || projectId,
+          projectPath: `/root/projects/${projectSlug || projectId}`,
+          sprintNumber,
+          sprintName: sprintName || `Sprint ${sprintNumber}`,
+          handoffContent: `## Context\n${enhancedContext}\n\n## Implementer's Plan\n${implementerResponse.response}`,
+          backlogContent: '',
+          architectureContent: '',
+        },
+      });
+    });
+
+    // Wait for worker to complete implementation (timeout: 15 minutes)
+    const workerResult = await step.waitForEvent('wait-for-implementation-sprint', {
+      event: 'worker/implementation.complete',
+      match: 'data.projectId',
+      timeout: '15m',
+    });
+
+    // Process worker result
+    const codeResult = {
+      success: workerResult?.data?.success ?? false,
+      output: workerResult?.data?.summary ?? '',
+      duration: workerResult?.data?.duration ?? 0,
+      error: workerResult?.data?.error,
+      filesChanged: workerResult?.data?.filesChanged ?? [],
+    };
 
     // Step 7: Post implementation results
     await step.run('post-code-result', async () => {
