@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -283,7 +283,33 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
     productionUrl?: string;
     tips?: string[];
     manualSteps?: string[];
+    timestamp?: number;
   } | null>(null);
+
+  // Load deployment result from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem(`deploy-status-${project.id}`);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        // Only restore if less than 1 hour old
+        if (parsed.timestamp && Date.now() - parsed.timestamp < 60 * 60 * 1000) {
+          setDeploymentResult(parsed);
+        } else {
+          localStorage.removeItem(`deploy-status-${project.id}`);
+        }
+      } catch {
+        localStorage.removeItem(`deploy-status-${project.id}`);
+      }
+    }
+  }, [project.id]);
+
+  // Save deployment result to localStorage when it changes
+  useEffect(() => {
+    if (deploymentResult) {
+      localStorage.setItem(`deploy-status-${project.id}`, JSON.stringify(deploymentResult));
+    }
+  }, [deploymentResult, project.id]);
 
   const handleDeploy = async () => {
     setIsDeploying(true);
@@ -321,6 +347,7 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
         dashboardUrl: data.dashboardUrl,
         productionUrl: data.productionUrl,
         tips: data.tips,
+        timestamp: Date.now(),
       });
 
       toast.success(`Deployment triggered via ${data.method}`, {
@@ -337,6 +364,7 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
 
   const clearDeploymentResult = () => {
     setDeploymentResult(null);
+    localStorage.removeItem(`deploy-status-${project.id}`);
   };
 
   const completedSprintsList = sprints.filter(s => s.status === 'COMPLETED');
