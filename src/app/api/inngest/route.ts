@@ -2491,39 +2491,102 @@ Make a CLEAR DECISION: Either APPROVE to proceed to QA, or REQUEST CHANGES with 
           ], kickoffMessage?.ts);
         });
 
-        // Implementer addresses the feedback
-        const fixResponse = await step.run(`implementer-fix${iterSuffix}`, async () => {
-          const fixContext = `## Previous Implementation
-${currentImplementation}
-
-## Reviewer Feedback
+        // Implementer addresses the feedback using tool_use to generate actual code
+        const reviewerFeedback = `## Reviewer Feedback - MUST FIX THESE ISSUES
 ${reviewerResponse.response}
 
-## Issues to Address
-${reviewDecision.issues || 'See reviewer feedback above'}`;
+## Specific Issues to Address
+${reviewDecision.issues || 'See reviewer feedback above'}
 
-          return generateRoleResponse(
-            'Implementer',
-            `The Reviewer has requested changes for Sprint ${sprintNumber}. Address the feedback and provide your updated implementation approach.
+IMPORTANT: The reviewer found issues with the previous implementation. You MUST:
+1. Read the feedback carefully
+2. Use create_file and edit_file tools to fix the actual code
+3. Do NOT just describe what you would do - actually fix the code`;
 
-IMPORTANT: Fix the issues mentioned. DO NOT ask for clarification - just fix them and explain what you changed.`,
-            channel,
-            kickoffMessage?.ts,
-            fixContext,
-            { skipKnowledge: true, skipThreadHistory: true }
+        const fixResult = await step.run(`implementer-fix${iterSuffix}`, async () => {
+          const result = await runImplementation(
+            projectName,
+            sprintNumber,
+            sprintName || `Sprint ${sprintNumber}`,
+            handoffContent || 'No handoff document provided',
+            undefined, // existing files
+            reviewerFeedback
           );
+
+          const filesFromOperations = result.operations.map(op => op.path);
+          return {
+            output: result.summary,
+            filesModified: filesFromOperations,
+            operations: result.operations,
+            success: result.success,
+            error: result.error,
+          };
         });
 
+        // Commit fix to GitHub if we have operations
+        if (fixResult.operations && fixResult.operations.length > 0 && targetRepo) {
+          const fixCommitResult = await step.run(`commit-fix-to-github${iterSuffix}`, async () => {
+            const branchName = `sprint-${sprintNumber}-implementation`;
+            const commitMessage = `[Sprint ${sprintNumber}] Fix reviewer feedback - Iteration ${iteration}
+
+Addressed reviewer feedback:
+${reviewDecision.issues || 'Various code review issues'}
+
+Files changed:
+${fixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`).join('\n')}`;
+
+            return applyOperationsViaGitHub(
+              fixResult.operations,
+              targetRepo,
+              branchName,
+              commitMessage
+            );
+          });
+
+          await step.run(`post-fix-commit-result${iterSuffix}`, async () => {
+            if (fixCommitResult.success) {
+              return postAsRole('Implementer', channel, 'Fix committed to GitHub', [
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: `✅ *Fixes Committed to GitHub*\n\nCommit: \`${fixCommitResult.commitSha?.substring(0, 7)}\`\nFiles fixed: ${fixResult.operations.length}`,
+                  },
+                },
+              ], kickoffMessage?.ts);
+            } else {
+              return postAsRole('Implementer', channel, 'GitHub commit failed', [
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: `⚠️ *GitHub Commit Failed*\n\nError: ${fixCommitResult.error}`,
+                  },
+                },
+              ], kickoffMessage?.ts);
+            }
+          });
+
+          allFilesModified = [...new Set([...allFilesModified, ...fixResult.filesModified])];
+        }
+
         await step.run(`post-implementer-fix${iterSuffix}`, async () => {
-          return postAsRole('Implementer', channel, fixResponse.response, [
+          const preview = fixResult.output.substring(0, 800);
+          return postAsRole('Implementer', channel, 'Fixes applied', [
             {
               type: 'section',
-              text: { type: 'mrkdwn', text: fixResponse.response },
+              text: { type: 'mrkdwn', text: `🔧 *Fixes Applied (Iteration ${iteration})*\n\n${preview}${fixResult.output.length > 800 ? '...' : ''}` },
+            },
+            {
+              type: 'context',
+              elements: [
+                { type: 'mrkdwn', text: `_Files modified: ${fixResult.filesModified.length} | Operations: ${fixResult.operations.length}_` },
+              ],
             },
           ], kickoffMessage?.ts);
         });
 
-        currentImplementation = fixResponse.response;
+        currentImplementation = fixResult.output;
         continue; // Loop back to review
       }
 
@@ -2730,39 +2793,102 @@ Make a CLEAR DECISION: Either PASS the tests, or document BUGS FOUND with specif
           ], kickoffMessage?.ts);
         });
 
-        // Implementer fixes the bugs
-        const bugfixResponse = await step.run(`implementer-bugfix${iterSuffix}`, async () => {
-          const bugfixContext = `## Current Implementation
-${currentImplementation}
-
-## QA Bug Report
+        // Implementer fixes the bugs using tool_use to generate actual code
+        const qaBugFeedback = `## QA Bug Report - MUST FIX THESE BUGS
 ${qaResponse.response}
 
-## Bugs to Fix
-${qaDecision.issues || 'See QA report above'}`;
+## Specific Bugs to Fix
+${qaDecision.issues || 'See QA report above'}
 
-          return generateRoleResponse(
-            'Implementer',
-            `QA found bugs in Sprint ${sprintNumber}. Fix the issues and provide your updated implementation.
+IMPORTANT: QA found bugs in the implementation. You MUST:
+1. Read the bug report carefully
+2. Use create_file and edit_file tools to fix the actual code
+3. Do NOT just describe what you would do - actually fix the bugs in the code`;
 
-IMPORTANT: Fix ALL bugs mentioned. DO NOT ask questions - just fix them and explain what you changed.`,
-            channel,
-            kickoffMessage?.ts,
-            bugfixContext,
-            { skipKnowledge: true, skipThreadHistory: true }
+        const bugfixResult = await step.run(`implementer-bugfix${iterSuffix}`, async () => {
+          const result = await runImplementation(
+            projectName,
+            sprintNumber,
+            sprintName || `Sprint ${sprintNumber}`,
+            handoffContent || 'No handoff document provided',
+            undefined, // existing files
+            qaBugFeedback
           );
+
+          const filesFromOperations = result.operations.map(op => op.path);
+          return {
+            output: result.summary,
+            filesModified: filesFromOperations,
+            operations: result.operations,
+            success: result.success,
+            error: result.error,
+          };
         });
 
+        // Commit bugfix to GitHub if we have operations
+        if (bugfixResult.operations && bugfixResult.operations.length > 0 && targetRepo) {
+          const bugfixCommitResult = await step.run(`commit-bugfix-to-github${iterSuffix}`, async () => {
+            const branchName = `sprint-${sprintNumber}-implementation`;
+            const commitMessage = `[Sprint ${sprintNumber}] Fix QA bugs - Iteration ${iteration}
+
+Fixed bugs reported by QA:
+${qaDecision.issues || 'Various bugs from QA testing'}
+
+Files changed:
+${bugfixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`).join('\n')}`;
+
+            return applyOperationsViaGitHub(
+              bugfixResult.operations,
+              targetRepo,
+              branchName,
+              commitMessage
+            );
+          });
+
+          await step.run(`post-bugfix-commit-result${iterSuffix}`, async () => {
+            if (bugfixCommitResult.success) {
+              return postAsRole('Implementer', channel, 'Bugfix committed to GitHub', [
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: `✅ *Bugfixes Committed to GitHub*\n\nCommit: \`${bugfixCommitResult.commitSha?.substring(0, 7)}\`\nFiles fixed: ${bugfixResult.operations.length}`,
+                  },
+                },
+              ], kickoffMessage?.ts);
+            } else {
+              return postAsRole('Implementer', channel, 'GitHub commit failed', [
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: `⚠️ *GitHub Commit Failed*\n\nError: ${bugfixCommitResult.error}`,
+                  },
+                },
+              ], kickoffMessage?.ts);
+            }
+          });
+
+          allFilesModified = [...new Set([...allFilesModified, ...bugfixResult.filesModified])];
+        }
+
         await step.run(`post-implementer-bugfix${iterSuffix}`, async () => {
-          return postAsRole('Implementer', channel, bugfixResponse.response, [
+          const preview = bugfixResult.output.substring(0, 800);
+          return postAsRole('Implementer', channel, 'Bugfixes applied', [
             {
               type: 'section',
-              text: { type: 'mrkdwn', text: bugfixResponse.response },
+              text: { type: 'mrkdwn', text: `🐛 *Bugfixes Applied (Iteration ${iteration})*\n\n${preview}${bugfixResult.output.length > 800 ? '...' : ''}` },
+            },
+            {
+              type: 'context',
+              elements: [
+                { type: 'mrkdwn', text: `_Files modified: ${bugfixResult.filesModified.length} | Operations: ${bugfixResult.operations.length}_` },
+              ],
             },
           ], kickoffMessage?.ts);
         });
 
-        currentImplementation = bugfixResponse.response;
+        currentImplementation = bugfixResult.output;
         continue; // Loop back to review
       }
 
