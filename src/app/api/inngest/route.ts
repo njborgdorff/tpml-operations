@@ -1161,6 +1161,65 @@ async function saveKnowledgeEntry(
 }
 
 /**
+ * Capture learnings from iteration cycles
+ * This stores what was found wrong, what was fixed, and the outcome
+ */
+async function captureIterationLearning(params: {
+  projectId: string;
+  projectName: string;
+  sprintNumber: number;
+  iteration: number;
+  sourceRole: 'Reviewer' | 'QA';
+  issuesFound: string;
+  fixApplied: string;
+  codeOutput?: string;
+  outcome: 'approved' | 'needs_more_work';
+}): Promise<{ id: string } | null> {
+  const { projectId, projectName, sprintNumber, iteration, sourceRole, issuesFound, fixApplied, codeOutput, outcome } = params;
+
+  const title = `${sourceRole} Feedback - ${projectName} Sprint ${sprintNumber} (Iter ${iteration})`;
+  const content = `## Issue Identified by ${sourceRole}
+${issuesFound}
+
+## Fix Applied by Implementer
+${fixApplied}
+
+${codeOutput ? `## Code Changes Summary
+\`\`\`
+${codeOutput.substring(0, 1000)}${codeOutput.length > 1000 ? '...' : ''}
+\`\`\`
+
+` : ''}## Outcome
+${outcome === 'approved' ? '✅ Fix was approved' : '⚠️ Additional work needed'}
+
+## Learnings
+- Issue type: ${sourceRole === 'Reviewer' ? 'Code quality/review finding' : 'Bug/test failure'}
+- Resolution: ${outcome === 'approved' ? 'Successfully addressed' : 'Required further iteration'}
+- Sprint: ${sprintNumber}, Iteration: ${iteration}`;
+
+  try {
+    const entry = await prisma.knowledgeEntry.create({
+      data: {
+        category: 'LESSON_LEARNED',
+        title,
+        content,
+        tags: [sourceRole.toLowerCase(), 'iteration', `sprint-${sprintNumber}`, outcome],
+        sourceRole: 'Implementer',
+        sourceType: 'iteration_learning',
+        projectId,
+        verified: false,
+      },
+    });
+
+    console.log(`[Knowledge] Captured iteration learning: ${entry.title} (${entry.id})`);
+    return { id: entry.id };
+  } catch (error) {
+    console.error('[Knowledge] Error capturing iteration learning:', error);
+    return null;
+  }
+}
+
+/**
  * Fetch recent knowledge entries for context
  */
 async function getRecentKnowledge(limit: number = 5): Promise<string> {
@@ -2242,11 +2301,14 @@ ${reviewDecision.issues || 'See reviewer feedback above'}`;
             'Implementer',
             `The Reviewer has requested changes for Sprint ${sprintNumber}. Address the feedback and provide your fix approach.
 
-IMPORTANT: Fix the issues mentioned. DO NOT ask for clarification - just explain what you will fix.`,
+IMPORTANT:
+- Check the knowledge base for similar issues you've fixed before
+- Fix the issues mentioned. DO NOT ask for clarification - just explain what you will fix.
+- Learn from any previous iteration learnings in the knowledge base.`,
             channel,
             kickoffMessage?.ts,
             fixContext,
-            { skipKnowledge: true, skipThreadHistory: true }
+            { skipKnowledge: false, skipThreadHistory: true } // Enable knowledge reading to learn from previous iterations
           );
 
           return planResponse;
@@ -2336,11 +2398,40 @@ IMPORTANT: This is autonomous fixing. Proceed with implementing fixes - no human
           }
         });
 
+        // Capture iteration learning from reviewer feedback
+        await step.run(`capture-reviewer-learning${iterSuffix}`, async () => {
+          return captureIterationLearning({
+            projectId,
+            projectName,
+            sprintNumber,
+            iteration,
+            sourceRole: 'Reviewer',
+            issuesFound: reviewDecision.issues || reviewerResponse.response,
+            fixApplied: fixResponse.response,
+            codeOutput: fixCodeResult.output,
+            outcome: 'needs_more_work', // Will be reviewed again
+          });
+        });
+
         currentImplementation = fixCodeResult.success
           ? `${fixResponse.response}\n\n## Fix Implementation Output\n\n${fixCodeResult.output}`
           : fixResponse.response;
         continue; // Loop back to review
       }
+
+      // Capture successful review learning
+      await step.run(`capture-review-success${iterSuffix}`, async () => {
+        return captureIterationLearning({
+          projectId,
+          projectName,
+          sprintNumber,
+          iteration,
+          sourceRole: 'Reviewer',
+          issuesFound: 'No issues - code review passed',
+          fixApplied: 'N/A - implementation met standards',
+          outcome: 'approved',
+        });
+      });
 
       // Reviewer approved - proceed to QA
       await step.run(`reviewer-approves${iterSuffix}`, async () => {
@@ -2443,11 +2534,14 @@ ${qaDecision.issues || 'See QA report above'}`;
             'Implementer',
             `QA found bugs in Sprint ${sprintNumber}. Explain your approach to fix these bugs.
 
-IMPORTANT: Fix ALL bugs mentioned. DO NOT ask questions - just explain what you will fix.`,
+IMPORTANT:
+- Check the knowledge base for similar bugs you've fixed before
+- Fix ALL bugs mentioned. DO NOT ask questions - just explain what you will fix.
+- Learn from any previous iteration learnings in the knowledge base.`,
             channel,
             kickoffMessage?.ts,
             bugfixContext,
-            { skipKnowledge: true, skipThreadHistory: true }
+            { skipKnowledge: false, skipThreadHistory: true } // Enable knowledge reading to learn from previous iterations
           );
 
           return planResponse;
@@ -2537,11 +2631,40 @@ IMPORTANT: This is autonomous bug fixing. Fix all issues - no human approval nee
           }
         });
 
+        // Capture iteration learning from QA feedback
+        await step.run(`capture-qa-learning${iterSuffix}`, async () => {
+          return captureIterationLearning({
+            projectId,
+            projectName,
+            sprintNumber,
+            iteration,
+            sourceRole: 'QA',
+            issuesFound: qaDecision.issues || qaResponse.response,
+            fixApplied: bugfixResponse.response,
+            codeOutput: bugfixCodeResult.output,
+            outcome: 'needs_more_work', // Will be tested again
+          });
+        });
+
         currentImplementation = bugfixCodeResult.success
           ? `${bugfixResponse.response}\n\n## Bug Fix Output\n\n${bugfixCodeResult.output}`
           : bugfixResponse.response;
         continue; // Loop back to review
       }
+
+      // Capture successful QA learning
+      await step.run(`capture-qa-success${iterSuffix}`, async () => {
+        return captureIterationLearning({
+          projectId,
+          projectName,
+          sprintNumber,
+          iteration,
+          sourceRole: 'QA',
+          issuesFound: 'No bugs found - all tests passed',
+          fixApplied: 'N/A - implementation passed QA',
+          outcome: 'approved',
+        });
+      });
 
       // QA passed - workflow complete!
       workflowComplete = true;
