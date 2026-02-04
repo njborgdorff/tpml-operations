@@ -1864,6 +1864,7 @@ const handleProjectKickoff = inngest.createFunction(
       sprintNumber,
       sprintName,
       handoffContent,
+      reinitiated,
     } = event.data;
 
     const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
@@ -1899,18 +1900,26 @@ const handleProjectKickoff = inngest.createFunction(
       };
     }
 
-    // Step 1: CTO announces project kickoff
+    // Step 1: CTO announces project kickoff (or reinitiation)
     const kickoffMessage = await step.run('announce-kickoff', async () => {
-      return postAsRole('CTO', channel, `Project kickoff: ${projectName}`, [
+      const headerText = reinitiated ? '🔄 Project Re-engagement' : '🚀 Project Kickoff';
+      const statusText = reinitiated
+        ? `*${projectName}* for *${clientName}* is being re-engaged!\n\n*Sprint ${sprintNumber}:* ${sprintName}\n\n_This is a workflow reinitiation - resuming from where we left off._`
+        : `*${projectName}* for *${clientName}* is now in implementation!\n\n*Sprint ${sprintNumber}:* ${sprintName}`;
+      const contextText = reinitiated
+        ? `_Re-engaging Implementer with existing handoff document_`
+        : `_Handoff from CTO to Implementer complete_`;
+
+      return postAsRole('CTO', channel, reinitiated ? `Project re-engagement: ${projectName}` : `Project kickoff: ${projectName}`, [
         {
           type: 'header',
-          text: { type: 'plain_text', text: '🚀 Project Kickoff', emoji: true },
+          text: { type: 'plain_text', text: headerText, emoji: true },
         },
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `*${projectName}* for *${clientName}* is now in implementation!\n\n*Sprint ${sprintNumber}:* ${sprintName}`,
+            text: statusText,
           },
         },
         {
@@ -1923,7 +1932,7 @@ const handleProjectKickoff = inngest.createFunction(
         {
           type: 'context',
           elements: [
-            { type: 'mrkdwn', text: `_Handoff from CTO to Implementer complete_` },
+            { type: 'mrkdwn', text: contextText },
           ],
         },
       ]);
@@ -2010,6 +2019,63 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
         ], kickoffMessage?.ts);
       });
     }
+
+    // Step 6: CTO reviews Implementer's plan and provides feedback/approval
+    const ctoResponse = await step.run('cto-review-plan', async () => {
+      const ctoContext = `## Implementer's Plan for Sprint ${sprintNumber}
+
+${implementerResponse.response}
+
+## Handoff Document Summary
+${handoffContent ? handoffContent.substring(0, 1500) : 'See handoff document for details'}`;
+
+      const ctoPrompt = reinitiated
+        ? `The project "${projectName}" has been RE-ENGAGED after a workflow interruption.
+
+The Implementer has outlined their plan above. As CTO, please:
+1. Acknowledge the re-engagement and confirm you understand the context
+2. Review the Implementer's outlined approach
+3. Validate it aligns with the architecture and handoff requirements
+4. Provide any technical guidance or concerns
+5. Give explicit approval to proceed with implementation
+
+Keep your response concise but ensure technical oversight is clear.`
+        : `The project "${projectName}" has kicked off and the Implementer has outlined their plan above.
+
+As CTO, please:
+1. Review the Implementer's outlined approach
+2. Validate it aligns with the architecture and handoff requirements
+3. Flag any technical concerns or missing considerations
+4. Provide guidance on priorities or approach if needed
+5. Give explicit approval to proceed with implementation
+
+Keep your response concise but ensure technical oversight is clear.`;
+
+      return generateRoleResponse(
+        'CTO',
+        ctoPrompt,
+        channel,
+        kickoffMessage?.ts,
+        ctoContext,
+        { skipKnowledge: true }
+      );
+    });
+
+    // Step 7: Post CTO's response
+    await step.run('post-cto-response', async () => {
+      return postAsRole('CTO', channel, ctoResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: ctoResponse.response },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_CTO technical review complete - proceeding to implementation_` },
+          ],
+        },
+      ], kickoffMessage?.ts);
+    });
 
     // =========================================================================
     // AUTOMATED ROLE-TO-ROLE WORKFLOW WITH FEEDBACK LOOPS
