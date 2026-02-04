@@ -3108,101 +3108,63 @@ const handleSprintApproved = inngest.createFunction(
     const {
       projectId,
       projectName,
-      sprintId: _sprintId,
+      projectSlug,
+      clientName,
+      sprintId,
       sprintNumber,
       sprintName,
       sprintGoal,
-      approvalNotes,
-      previousSprintReview,
       handoffContent,
+      projectPath,
     } = event.data;
     const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
 
-    // Step 1: CTO announces sprint start
-    const startMessage = await step.run('announce-sprint-start', async () => {
-      return postAsRole('CTO', channel, `Sprint ${sprintNumber} approved and starting`, [
+    // Step 1: Announce sprint continuation
+    await step.run('announce-sprint-continuation', async () => {
+      return postAsRole('CTO', channel, `Sprint ${sprintNumber} approved - starting full workflow`, [
         {
           type: 'header',
-          text: { type: 'plain_text', text: '🚀 Sprint Approved & Starting', emoji: true },
+          text: { type: 'plain_text', text: `🚀 Sprint ${sprintNumber} Starting`, emoji: true },
         },
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) is now in progress!\n\n${sprintGoal ? `*Sprint Goal:* ${sprintGoal}` : ''}${approvalNotes ? `\n\n*Approval Notes:* ${approvalNotes}` : ''}`,
+            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) has been approved!\n\n${sprintGoal ? `*Sprint Goal:* ${sprintGoal}` : ''}\n\n_Triggering full implementation workflow..._`,
           },
-        },
-        {
-          type: 'context',
-          elements: [
-            { type: 'mrkdwn', text: `_Human-approved at ${new Date().toLocaleString()}_` },
-          ],
         },
       ]);
     });
 
-    // Step 2: Build full context for Implementer with complete documents
-    const implementerContext = `## SPRINT ${sprintNumber} HANDOFF DOCUMENT - USE THIS (DO NOT ASK FOR IT)
-
-The complete handoff document is provided below. You MUST use this document directly.
-
----
-${handoffContent || `Sprint ${sprintNumber} (${sprintName}) for project "${projectName}".
-Sprint Goal: ${sprintGoal || 'See backlog items'}
-${previousSprintReview ? `\nPrevious Sprint Review:\n${previousSprintReview}` : ''}
-${approvalNotes ? `\nOwner Approval Notes: ${approvalNotes}` : ''}`}
----
-
-END OF HANDOFF DOCUMENT`;
-
-    // Step 3: Invoke Implementer to begin work with full context
-    const implementerResponse = await step.run('invoke-implementer', async () => {
-      const prompt = `PROJECT: "${projectName}" - Sprint ${sprintNumber} (${sprintName})
-
-YOUR HANDOFF DOCUMENT IS PROVIDED ABOVE in "Additional Context". It contains:
-- Sprint goal and requirements
-- Full BACKLOG.md content
-- Full ARCHITECTURE.md content
-- Previous sprint review (if applicable)
-
-INSTRUCTIONS:
-1. Read the handoff document provided above (it's already in your context)
-2. Summarize the KEY deliverables for Sprint ${sprintNumber}
-3. List the specific tasks you will implement
-4. Outline your implementation approach and first steps
-
-IMPORTANT: You are authorized to proceed. DO NOT ask for permission or additional documents.
-DO NOT ask for BACKLOG.md or ARCHITECTURE.md - they are included in the handoff above.
-Start working immediately based on the handoff document.`;
-
-      return generateRoleResponse(
-        'Implementer',
-        prompt,
-        channel,
-        startMessage?.ts,
-        implementerContext,
-        { skipKnowledge: true }
-      );
-    });
-
-    // Step 4: Post Implementer's response
-    await step.run('post-implementer-response', async () => {
-      return postAsRole('Implementer', channel, implementerResponse.response, [
-        {
-          type: 'section',
-          text: { type: 'mrkdwn', text: implementerResponse.response },
+    // Step 2: Trigger the full workflow by emitting project/kicked_off event
+    // This ensures Sprint 2+ goes through the same full workflow as Sprint 1
+    // (CTO review → Architect → Implementation → Code Review → QA → DevOps)
+    await step.run('trigger-full-workflow', async () => {
+      await inngest.send({
+        name: 'project/kicked_off',
+        data: {
+          projectId,
+          projectName,
+          projectSlug,
+          clientName: clientName || 'Client',
+          sprintId,
+          sprintNumber,
+          sprintName: sprintName || `Sprint ${sprintNumber}`,
+          handoffContent,
+          projectPath: projectPath || `C:\\tpml-ai-team\\projects\\${projectSlug}`,
+          reinitiated: true, // Flag to indicate this is a continuation sprint
         },
-      ], startMessage?.ts);
-    });
+      });
 
-    console.log(`[Sprint] Sprint ${sprintNumber} of ${projectName} approved - Implementer invoked`);
+      console.log(`[Sprint] Triggered full workflow for ${projectName} Sprint ${sprintNumber}`);
+      return { eventSent: 'project/kicked_off' };
+    });
 
     return {
       success: true,
       projectId,
       sprintNumber,
-      implementerInvoked: true,
-      messageTs: startMessage?.ts,
+      workflowTriggered: true,
     };
   }
 );
