@@ -275,9 +275,19 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
 
   // Deploy handler - triggers deployment of pending changes
   const [isDeploying, setIsDeploying] = useState(false);
+  const [deploymentResult, setDeploymentResult] = useState<{
+    success: boolean;
+    method: string;
+    message: string;
+    dashboardUrl?: string;
+    productionUrl?: string;
+    tips?: string[];
+    manualSteps?: string[];
+  } | null>(null);
 
   const handleDeploy = async () => {
     setIsDeploying(true);
+    setDeploymentResult(null);
     try {
       const response = await fetch('/api/deploy', {
         method: 'POST',
@@ -289,8 +299,14 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
 
       if (!response.ok) {
         if (data.manualSteps) {
+          setDeploymentResult({
+            success: false,
+            method: 'manual',
+            message: 'Deployment not configured',
+            manualSteps: data.manualSteps,
+          });
           toast.error('Deployment not configured', {
-            description: data.manualSteps[0],
+            description: 'See manual steps below',
           });
         } else {
           throw new Error(data.error || 'Deployment failed');
@@ -298,15 +314,29 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
         return;
       }
 
+      setDeploymentResult({
+        success: true,
+        method: data.method,
+        message: data.message,
+        dashboardUrl: data.dashboardUrl,
+        productionUrl: data.productionUrl,
+        tips: data.tips,
+      });
+
       toast.success(`Deployment triggered via ${data.method}`, {
         description: data.message,
       });
       router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Deployment failed');
+      setDeploymentResult(null);
     } finally {
       setIsDeploying(false);
     }
+  };
+
+  const clearDeploymentResult = () => {
+    setDeploymentResult(null);
   };
 
   const completedSprintsList = sprints.filter(s => s.status === 'COMPLETED');
@@ -316,27 +346,34 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
   return (
     <div className="space-y-6">
       {/* Deploy Button - Always visible for quick deployment */}
-      <Card className="border-orange-200 bg-gradient-to-r from-orange-50 to-amber-50">
+      <Card className={`border-orange-200 ${deploymentResult?.success ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200' : 'bg-gradient-to-r from-orange-50 to-amber-50'}`}>
         <CardContent className="pt-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Rocket className="h-5 w-5 text-orange-600" />
+              <Rocket className={`h-5 w-5 ${deploymentResult?.success ? 'text-green-600' : 'text-orange-600'}`} />
               <div>
-                <p className="font-medium">Deploy Changes</p>
+                <p className="font-medium">
+                  {deploymentResult?.success ? 'Deployment In Progress' : 'Deploy Changes'}
+                </p>
                 <p className="text-sm text-muted-foreground">
-                  Push pending code changes to production
+                  {deploymentResult?.message || 'Push pending code changes to production'}
                 </p>
               </div>
             </div>
             <Button
               onClick={handleDeploy}
               disabled={isDeploying}
-              className="bg-orange-600 hover:bg-orange-700"
+              className={deploymentResult?.success ? 'bg-green-600 hover:bg-green-700' : 'bg-orange-600 hover:bg-orange-700'}
             >
               {isDeploying ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
                   Deploying...
+                </>
+              ) : deploymentResult?.success ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Redeploy
                 </>
               ) : (
                 <>
@@ -346,6 +383,82 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
               )}
             </Button>
           </div>
+
+          {/* Deployment Status Details */}
+          {deploymentResult && (
+            <div className="mt-4 pt-4 border-t border-orange-200">
+              {deploymentResult.success ? (
+                <div className="space-y-3">
+                  {/* Action Links */}
+                  <div className="flex flex-wrap gap-3">
+                    {deploymentResult.dashboardUrl && (
+                      <a
+                        href={deploymentResult.dashboardUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        View Build Status
+                      </a>
+                    )}
+                    {deploymentResult.productionUrl && (
+                      <a
+                        href={deploymentResult.productionUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                      >
+                        <Globe className="h-4 w-4" />
+                        Open Production Site
+                      </a>
+                    )}
+                  </div>
+
+                  {/* Tips */}
+                  {deploymentResult.tips && deploymentResult.tips.length > 0 && (
+                    <div className="bg-white/50 rounded-lg p-3">
+                      <p className="text-xs font-medium text-gray-600 mb-2">What to expect:</p>
+                      <ul className="text-sm text-gray-600 space-y-1">
+                        {deploymentResult.tips.map((tip, i) => (
+                          <li key={i} className="flex items-start gap-2">
+                            <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                            {tip}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearDeploymentResult}
+                    className="text-gray-500"
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              ) : deploymentResult.manualSteps ? (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium text-amber-800">Manual deployment required:</p>
+                  <ol className="text-sm text-amber-700 space-y-1 list-decimal list-inside">
+                    {deploymentResult.manualSteps.map((step, i) => (
+                      <li key={i}>{step}</li>
+                    ))}
+                  </ol>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearDeploymentResult}
+                    className="text-gray-500"
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          )}
         </CardContent>
       </Card>
 
