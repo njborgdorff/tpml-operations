@@ -227,6 +227,50 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
     }
   };
 
+  // QA Verification - confirm testing passed or report issues
+  const [isVerifyingQa, setIsVerifyingQa] = useState(false);
+  const [showIssuesForm, setShowIssuesForm] = useState(false);
+  const [qaIssues, setQaIssues] = useState('');
+
+  const handleQaVerification = async (verified: boolean, issues?: string) => {
+    if (!activeSprint) return;
+
+    setIsVerifyingQa(true);
+    try {
+      const response = await fetch('/api/workflow/qa-verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: project.id,
+          sprintNumber: activeSprint.number,
+          verified,
+          issuesFound: issues || '',
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'QA verification failed');
+      }
+
+      if (verified) {
+        toast.success('QA Verified! Workflow will continue to deployment prep.');
+      } else {
+        toast.success('Issues reported. Workflow will loop back for fixes.');
+      }
+
+      setShowIssuesForm(false);
+      setQaIssues('');
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'QA verification failed');
+    } finally {
+      setIsVerifyingQa(false);
+    }
+  };
+
+
   const completedSprintsList = sprints.filter(s => s.status === 'COMPLETED');
   const sprintAwaitingApproval = sprints.find(s => s.status === 'AWAITING_APPROVAL');
   const hasCompletedSprints = completedSprintsList.length > 0;
@@ -395,6 +439,94 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
                 </Button>
               </div>
             </details>
+
+            {/* QA Verification Section */}
+            <div className="border-t pt-4 mt-4">
+              <h4 className="font-medium text-sm mb-3 flex items-center gap-2">
+                <FileCheck className="h-4 w-4 text-purple-600" />
+                QA Verification
+              </h4>
+              <p className="text-sm text-muted-foreground mb-3">
+                After testing the implementation, confirm results:
+              </p>
+
+              {!showIssuesForm ? (
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => handleQaVerification(true)}
+                    disabled={isVerifyingQa}
+                    className="bg-green-600 hover:bg-green-700"
+                  >
+                    {isVerifyingQa ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                    )}
+                    QA Verified
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => setShowIssuesForm(true)}
+                    disabled={isVerifyingQa}
+                  >
+                    <AlertCircle className="h-4 w-4 mr-2" />
+                    Issues Found
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <textarea
+                    className="w-full p-3 border rounded-lg text-sm"
+                    rows={4}
+                    placeholder="Describe the issues found during testing..."
+                    value={qaIssues}
+                    onChange={(e) => setQaIssues(e.target.value)}
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => handleQaVerification(false, qaIssues)}
+                      disabled={isVerifyingQa || !qaIssues.trim()}
+                    >
+                      {isVerifyingQa ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <AlertCircle className="h-4 w-4 mr-2" />
+                      )}
+                      Submit Issues
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setShowIssuesForm(false);
+                        setQaIssues('');
+                      }}
+                      disabled={isVerifyingQa}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {activeSprint.devServerUrl && (
+                <div className="mt-3">
+                  <a
+                    href={activeSprint.devServerUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-blue-600 hover:underline flex items-center gap-1"
+                  >
+                    <Globe className="h-4 w-4" />
+                    Open Dev Server
+                  </a>
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}
