@@ -255,11 +255,14 @@ Start implementing now. Use the tools to create real files.`;
     }
   }
 
-  // Hit max iterations
+  // Hit max iterations - generate summary from operations
+  const fileList = operations.map(op => `- ${op.type}: ${op.path}`).join('\n');
   return {
     success: operations.length > 0,
     operations,
-    summary: 'Implementation reached maximum iterations.',
+    summary: operations.length > 0
+      ? `Implementation completed with ${operations.length} file operations:\n\n${fileList}`
+      : 'Max iterations reached without generating code.',
     error: operations.length === 0 ? 'Max iterations reached without generating code.' : undefined,
   };
 }
@@ -279,7 +282,9 @@ export async function applyOperationsViaGitHub(
   }
 
   try {
-    // Get the current commit SHA for the branch
+    // Try to get the target branch, or create it from default branch
+    let baseCommitSha: string;
+
     const branchResponse = await fetch(
       `https://api.github.com/repos/${repo}/git/ref/heads/${branch}`,
       {
@@ -290,13 +295,70 @@ export async function applyOperationsViaGitHub(
       }
     );
 
-    if (!branchResponse.ok) {
-      const error = await branchResponse.text();
-      return { success: false, error: `Failed to get branch: ${error}` };
-    }
+    if (branchResponse.ok) {
+      const branchData = await branchResponse.json();
+      baseCommitSha = branchData.object.sha;
+    } else {
+      // Branch doesn't exist - get default branch (master or main) to create from
+      const repoResponse = await fetch(
+        `https://api.github.com/repos/${repo}`,
+        {
+          headers: {
+            Authorization: `Bearer ${githubToken}`,
+            Accept: 'application/vnd.github.v3+json',
+          },
+        }
+      );
 
-    const branchData = await branchResponse.json();
-    const baseCommitSha = branchData.object.sha;
+      if (!repoResponse.ok) {
+        const error = await repoResponse.text();
+        return { success: false, error: `Failed to get repo info: ${error}` };
+      }
+
+      const repoData = await repoResponse.json();
+      const defaultBranch = repoData.default_branch || 'master';
+
+      // Get the default branch SHA
+      const defaultBranchResponse = await fetch(
+        `https://api.github.com/repos/${repo}/git/ref/heads/${defaultBranch}`,
+        {
+          headers: {
+            Authorization: `Bearer ${githubToken}`,
+            Accept: 'application/vnd.github.v3+json',
+          },
+        }
+      );
+
+      if (!defaultBranchResponse.ok) {
+        const error = await defaultBranchResponse.text();
+        return { success: false, error: `Failed to get default branch: ${error}` };
+      }
+
+      const defaultBranchData = await defaultBranchResponse.json();
+      baseCommitSha = defaultBranchData.object.sha;
+
+      // Create the new branch
+      const createBranchResponse = await fetch(
+        `https://api.github.com/repos/${repo}/git/refs`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${githubToken}`,
+            Accept: 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ref: `refs/heads/${branch}`,
+            sha: baseCommitSha,
+          }),
+        }
+      );
+
+      if (!createBranchResponse.ok) {
+        const error = await createBranchResponse.text();
+        return { success: false, error: `Failed to create branch: ${error}` };
+      }
+    }
 
     // Get the base tree
     const commitResponse = await fetch(
