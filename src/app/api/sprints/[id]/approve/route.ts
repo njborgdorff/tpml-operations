@@ -75,8 +75,21 @@ export async function POST(
       },
     });
 
-    // Get handoff document if available
+    // Get all relevant artifacts for the sprint handoff
     const handoffArtifact = sprint.project.artifacts.find(a => a.type === 'HANDOFF');
+    const backlogArtifact = sprint.project.artifacts.find(a => a.name === 'BACKLOG.md');
+    const architectureArtifact = sprint.project.artifacts.find(a => a.name === 'ARCHITECTURE.md');
+
+    // Build sprint-specific handoff content that includes full documents
+    const sprintHandoffContent = buildSprintHandoff(
+      sprint.number,
+      sprint.name || `Sprint ${sprint.number}`,
+      sprint.goal || '',
+      backlogArtifact?.content || '',
+      architectureArtifact?.content || '',
+      handoffArtifact?.content || '',
+      previousSprint?.reviewSummary || ''
+    );
 
     // Emit event to trigger AI role invocation for the new sprint
     try {
@@ -93,7 +106,9 @@ export async function POST(
           sprintGoal: sprint.goal,
           approvalNotes,
           previousSprintReview: previousSprint?.reviewSummary,
-          handoffContent: handoffArtifact?.content,
+          handoffContent: sprintHandoffContent,
+          backlogContent: backlogArtifact?.content,
+          architectureContent: architectureArtifact?.content,
           projectPath,
         },
       });
@@ -214,4 +229,77 @@ export async function DELETE(
       { status: 500 }
     );
   }
+}
+
+/**
+ * Build a complete handoff document for a specific sprint
+ * This includes the full backlog and architecture content, not just references
+ */
+function buildSprintHandoff(
+  sprintNumber: number,
+  sprintName: string,
+  sprintGoal: string,
+  backlogContent: string,
+  architectureContent: string,
+  originalHandoff: string,
+  previousSprintReview: string
+): string {
+  // Extract sprint-specific items from backlog
+  const sprintSection = extractSprintFromBacklog(backlogContent, sprintNumber);
+
+  return `# Sprint ${sprintNumber} Handoff: ${sprintName}
+
+## Sprint Goal
+${sprintGoal || 'See sprint backlog items below'}
+
+${previousSprintReview ? `## Previous Sprint Review
+${previousSprintReview}
+
+---
+` : ''}
+## Sprint ${sprintNumber} Backlog Items
+
+${sprintSection || 'No specific sprint items found in backlog. See full backlog below.'}
+
+---
+
+## Full Project Backlog (BACKLOG.md)
+
+${backlogContent || 'Backlog not available'}
+
+---
+
+## Architecture (ARCHITECTURE.md)
+
+${architectureContent || 'Architecture document not available'}
+
+---
+
+## Original Project Handoff Reference
+
+${originalHandoff ? originalHandoff.substring(0, 2000) + (originalHandoff.length > 2000 ? '\n\n[Truncated - see original HANDOFF document for full details]' : '') : 'No original handoff document available'}
+`;
+}
+
+/**
+ * Extract sprint-specific section from backlog content
+ */
+function extractSprintFromBacklog(backlogContent: string, sprintNumber: number): string {
+  if (!backlogContent) return '';
+
+  // Try to find sprint-specific section
+  const sprintPatterns = [
+    new RegExp(`##\\s*Sprint\\s*${sprintNumber}[:\\s-]?[^#]*`, 'i'),
+    new RegExp(`###\\s*Sprint\\s*${sprintNumber}[:\\s-]?[^#]*`, 'i'),
+    new RegExp(`\\*\\*Sprint\\s*${sprintNumber}\\*\\*[^*]*`, 'i'),
+  ];
+
+  for (const pattern of sprintPatterns) {
+    const match = backlogContent.match(pattern);
+    if (match) {
+      return match[0].trim();
+    }
+  }
+
+  return '';
 }

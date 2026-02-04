@@ -3108,77 +3108,63 @@ const handleSprintApproved = inngest.createFunction(
     const {
       projectId,
       projectName,
-      sprintId: _sprintId,
+      projectSlug,
+      clientName,
+      sprintId,
       sprintNumber,
       sprintName,
       sprintGoal,
-      approvalNotes,
-      previousSprintReview,
       handoffContent,
+      projectPath,
     } = event.data;
     const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
 
-    // Step 1: CTO announces sprint start
-    const startMessage = await step.run('announce-sprint-start', async () => {
-      return postAsRole('CTO', channel, `Sprint ${sprintNumber} approved and starting`, [
+    // Step 1: Announce sprint continuation
+    await step.run('announce-sprint-continuation', async () => {
+      return postAsRole('CTO', channel, `Sprint ${sprintNumber} approved - starting full workflow`, [
         {
           type: 'header',
-          text: { type: 'plain_text', text: '🚀 Sprint Approved & Starting', emoji: true },
+          text: { type: 'plain_text', text: `🚀 Sprint ${sprintNumber} Starting`, emoji: true },
         },
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) is now in progress!\n\n${sprintGoal ? `*Sprint Goal:* ${sprintGoal}` : ''}${approvalNotes ? `\n\n*Approval Notes:* ${approvalNotes}` : ''}`,
+            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) has been approved!\n\n${sprintGoal ? `*Sprint Goal:* ${sprintGoal}` : ''}\n\n_Triggering full implementation workflow..._`,
           },
-        },
-        {
-          type: 'context',
-          elements: [
-            { type: 'mrkdwn', text: `_Human-approved at ${new Date().toLocaleString()}_` },
-          ],
         },
       ]);
     });
 
-    // Step 2: Build context for Implementer
-    const context = await step.run('build-context', async () => {
-      let ctx = `Starting Sprint ${sprintNumber} (${sprintName}) for project "${projectName}".`;
-      if (sprintGoal) ctx += ` Sprint goal: ${sprintGoal}.`;
-      if (previousSprintReview) ctx += `\n\nPrevious sprint review:\n${previousSprintReview}`;
-      if (approvalNotes) ctx += `\n\nOwner approval notes: ${approvalNotes}`;
-      if (handoffContent) ctx += `\n\nOriginal handoff context:\n${handoffContent.substring(0, 500)}...`;
-      return ctx;
-    });
-
-    // Step 3: Invoke Implementer to begin work
-    const implementerResponse = await step.run('invoke-implementer', async () => {
-      return generateRoleResponse(
-        'Implementer',
-        `${context}\n\nWhat are your first steps for Sprint ${sprintNumber}?`,
-        channel,
-        startMessage?.ts
-      );
-    });
-
-    // Step 4: Post Implementer's response
-    await step.run('post-implementer-response', async () => {
-      return postAsRole('Implementer', channel, implementerResponse.response, [
-        {
-          type: 'section',
-          text: { type: 'mrkdwn', text: implementerResponse.response },
+    // Step 2: Trigger the full workflow by emitting project/kicked_off event
+    // This ensures Sprint 2+ goes through the same full workflow as Sprint 1
+    // (CTO review → Architect → Implementation → Code Review → QA → DevOps)
+    await step.run('trigger-full-workflow', async () => {
+      await inngest.send({
+        name: 'project/kicked_off',
+        data: {
+          projectId,
+          projectName,
+          projectSlug,
+          clientName: clientName || 'Client',
+          sprintId,
+          sprintNumber,
+          sprintName: sprintName || `Sprint ${sprintNumber}`,
+          handoffContent,
+          projectPath: projectPath || `C:\\tpml-ai-team\\projects\\${projectSlug}`,
+          reinitiated: true, // Flag to indicate this is a continuation sprint
         },
-      ], startMessage?.ts);
-    });
+      });
 
-    console.log(`[Sprint] Sprint ${sprintNumber} of ${projectName} approved - Implementer invoked`);
+      console.log(`[Sprint] Triggered full workflow for ${projectName} Sprint ${sprintNumber}`);
+      return { eventSent: 'project/kicked_off' };
+    });
 
     return {
       success: true,
       projectId,
       sprintNumber,
-      implementerInvoked: true,
-      messageTs: startMessage?.ts,
+      workflowTriggered: true,
     };
   }
 );
