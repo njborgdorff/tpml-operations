@@ -12,7 +12,8 @@ import { serve } from 'inngest/next';
 import { Inngest } from 'inngest';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaClient } from '@prisma/client';
-import { invokeClaudeCode, buildRolePrompt } from '@/lib/orchestration/claude-code';
+// Worker now handles Claude Code CLI - these are no longer used directly
+// import { invokeClaudeCode, buildRolePrompt } from '@/lib/orchestration/claude-code';
 
 // Retry configuration for resilient autonomous workflows
 const WORKFLOW_RETRY_CONFIG = {
@@ -2122,8 +2123,8 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
     // Implementer plans, Developer writes code using Claude Code CLI
     // =========================================================================
 
-    // Determine project path - use provided path or construct from slug
-    const effectiveProjectPath = projectPath || `C:\\tpml-ai-team\\projects\\${projectSlug}`;
+    // Determine project path - worker uses /root/projects/{slug} on Droplet
+    const _effectiveProjectPath = projectPath || `C:\\tpml-ai-team\\projects\\${projectSlug}`;
 
     // Step 5b: Implementer hands off to Developer
     await step.run('implementer-to-developer-handoff', async () => {
@@ -2944,8 +2945,8 @@ const handleSprintApproved = inngest.createFunction(
     } = event.data;
     const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
 
-    // Determine project path
-    const projectPath = eventProjectPath || `C:\\tpml-ai-team\\projects\\${projectSlug || projectId}`;
+    // Determine project path - worker uses /root/projects/{slug} on Droplet
+    const _projectPath = eventProjectPath || `C:\\tpml-ai-team\\projects\\${projectSlug || projectId}`;
 
     // Step 1: CTO announces sprint start
     const startMessage = await step.run('announce-sprint-start', async () => {
