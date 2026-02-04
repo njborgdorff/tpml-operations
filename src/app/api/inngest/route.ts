@@ -2137,13 +2137,14 @@ Keep your response focused on architecture validation. Be concise but thorough.`
     // After Implementer outlines their plan, continue through Review and QA
     // If issues are found, loop back to Implementer for fixes
     // Human approval only required at sprint completion
-    // Max 3 iterations to prevent infinite loops
+    // Max 10 iterations to allow for feedback cycles while preventing infinite loops
     // =========================================================================
 
-    const MAX_ITERATIONS = 3;
+    const MAX_ITERATIONS = 10;
     let currentImplementation = implementerResponse.response;
     let iteration = 0;
     let workflowComplete = false;
+    let allFilesModified: string[] = []; // Track all files across iterations
 
     while (!workflowComplete && iteration < MAX_ITERATIONS) {
       iteration++;
@@ -2169,36 +2170,181 @@ Keep your response focused on architecture validation. Be concise but thorough.`
         ], kickoffMessage?.ts);
       });
 
-      // Emit event for local worker to invoke Claude CLI
-      // (CLI invocation can't run on Vercel serverless - needs local worker)
+      // Generate implementation INLINE using Claude API
+      // This eliminates coordination issues between separate Inngest functions
+      const implementationResult = await step.run(`generate-implementation${iterSuffix}`, async () => {
+        const iterationContext = iteration > 1 && currentImplementation
+          ? `\n\n## Previous Feedback to Address\n\n${currentImplementation}`
+          : '';
+
+        const implementationPrompt = `You are the Implementer for TPML (Total Product Management, Ltd.).
+
+## Your Task
+Implement Sprint ${sprintNumber} (${sprintName}) for project "${projectName}" based on the handoff document below.
+
+## Handoff Document
+${handoffContent || 'No handoff document provided'}
+${iterationContext}
+
+## Instructions
+1. Analyze the requirements from the handoff
+2. Plan the implementation approach
+3. List specific files you would create/modify
+4. Provide code snippets for key implementations
+5. Document any assumptions or decisions made
+
+## Output Format
+Provide a structured implementation report:
+
+### Implementation Summary
+[Brief overview of what was implemented]
+
+### Files Modified/Created
+- List each file with a brief description
+
+### Key Code Changes
+\`\`\`typescript
+// Show important code snippets with explanations
+\`\`\`
+
+### Testing Notes
+[What tests were added/modified]
+
+### Next Steps
+[Any remaining work or handoff notes]
+
+Be specific and detailed. This output will be reviewed by the Reviewer role.`;
+
+        const anthropic = new Anthropic({
+          apiKey: process.env.ANTHROPIC_API_KEY,
+        });
+
+        const response = await anthropic.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          messages: [{ role: 'user', content: implementationPrompt }],
+        });
+
+        const content = response.content[0];
+        const implementationText = content.type === 'text' ? content.text : 'Implementation generated';
+
+        // Parse files from the implementation text
+        const fileMatches = implementationText.match(/[-*]\s+`?([a-zA-Z0-9_\-./]+\.[a-zA-Z]+)`?/g) || [];
+        const filesFromOutput = fileMatches
+          .map(m => m.replace(/^[-*]\s+`?/, '').replace(/`?$/, ''))
+          .filter(f => f.includes('.'))
+          .slice(0, 20);
+
+        return {
+          output: implementationText,
+          filesModified: filesFromOutput,
+        };
+      });
+
+      // Post implementation progress
+      await step.run(`post-implementation-progress${iterSuffix}`, async () => {
+        const preview = implementationResult.output.substring(0, 800);
+        return postAsRole('Implementer', channel, 'Implementation in progress', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `⚙️ *Implementation Progress (Iteration ${iteration})*\n\n${preview}${implementationResult.output.length > 800 ? '...' : ''}`,
+            },
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Full implementation: ${implementationResult.output.length} characters | Files: ${implementationResult.filesModified.length}_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
+
+      // Also emit event for external CLI workers (optional - they can enhance the implementation)
       await step.run(`emit-worker-event${iterSuffix}`, async () => {
         await inngest.send({
           name: 'worker/implementation.start',
           data: {
             projectId,
             projectSlug,
+            projectName,
             projectPath,
             sprintNumber,
             sprintName,
             handoffContent,
             iteration,
             previousFeedback: iteration > 1 ? currentImplementation : null,
+            channel,
+            threadTs: kickoffMessage?.ts,
           },
         });
         return { emitted: true };
       });
 
-      // Post worker notification
-      await step.run(`post-worker-notification${iterSuffix}`, async () => {
-        return postAsRole('Implementer', channel, 'Implementation started on worker', [
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: `🔨 *Implementation Started*\n\nWorker has been notified to start Sprint ${sprintNumber} implementation.\n\n_Project path: ${projectPath}_\n_Waiting for worker to complete..._`,
-            },
+      // Use the inline implementation result (no waiting for external worker)
+      const implementationOutput = implementationResult.output;
+      const filesModified: string[] = implementationResult.filesModified;
+
+      // Accumulate files modified across all iterations (deduplicated)
+      const combinedFiles = allFilesModified.concat(filesModified);
+      allFilesModified = combinedFiles.filter((file, index) => combinedFiles.indexOf(file) === index);
+
+      // Update currentImplementation with inline result
+      currentImplementation = `## Implementation Output
+
+${implementationOutput}
+
+${filesModified.length > 0 ? `## Files Modified\n\n${filesModified.map((f: string) => `- ${f}`).join('\n')}` : ''}`;
+
+      // Store implementation as artifact for human visibility
+      await step.run(`store-implementation-artifact${iterSuffix}`, async () => {
+        const artifactContent = `# Sprint ${sprintNumber} Implementation - Iteration ${iteration}
+
+**Project:** ${projectName}
+**Sprint:** ${sprintName}
+**Date:** ${new Date().toISOString()}
+**Iteration:** ${iteration}
+
+---
+
+## Implementation Summary
+
+${implementationOutput}
+
+---
+
+## Files Modified (${filesModified.length} files)
+
+${filesModified.length > 0 ? filesModified.map(f => `- \`${f}\``).join('\n') : '_No files listed_'}
+
+---
+
+## Cumulative Files (All Iterations: ${allFilesModified.length} files)
+
+${allFilesModified.length > 0 ? allFilesModified.map(f => `- \`${f}\``).join('\n') : '_No files listed_'}
+`;
+
+        // Store as SPRINT_STATUS artifact (or create new version if exists)
+        const existingArtifact = await prisma.artifact.findFirst({
+          where: {
+            projectId,
+            type: 'SPRINT_STATUS',
           },
-        ], kickoffMessage?.ts);
+          orderBy: { version: 'desc' },
+        });
+
+        await prisma.artifact.create({
+          data: {
+            projectId,
+            type: 'SPRINT_STATUS',
+            name: `Sprint_${sprintNumber}_Implementation_Iter${iteration}.md`,
+            content: artifactContent,
+            version: (existingArtifact?.version || 0) + 1,
+          },
+        });
+
+        return { stored: true, iteration, filesCount: filesModified.length };
       });
 
       // Signal handoff to Reviewer
@@ -2207,10 +2353,14 @@ Keep your response focused on architecture validation. Be concise but thorough.`
           ? `✅ *Implementation Complete*\n\nI've completed the Sprint ${sprintNumber} implementation. Handing off to Reviewer for code review.`
           : `✅ *Fixes Complete (Iteration ${iteration})*\n\nI've addressed the feedback and completed the fixes. Handing off to Reviewer for re-review.`;
 
+        const filesInfo = filesModified.length > 0
+          ? `\n\n*Files modified:* ${filesModified.length}`
+          : '';
+
         return postAsRole('Implementer', channel, 'Implementation complete, handing off to Reviewer', [
           {
             type: 'section',
-            text: { type: 'mrkdwn', text: message },
+            text: { type: 'mrkdwn', text: message + filesInfo },
           },
           {
             type: 'context',
@@ -2223,25 +2373,44 @@ Keep your response focused on architecture validation. Be concise but thorough.`
 
       // Step 7: Invoke Reviewer to review the implementation
       const reviewerResponse = await step.run(`invoke-reviewer${iterSuffix}`, async () => {
-        const reviewContext = `## Implementation Summary from Implementer${iteration > 1 ? ` (Iteration ${iteration})` : ''}
+        // Build comprehensive review context with documentation
+        const reviewContext = `## Project: ${projectName}
+## Sprint ${sprintNumber}: ${sprintName}
+## Client: ${clientName}
+
+---
+
+## Sprint Requirements (from Handoff Document)
+
+${handoffContent ? handoffContent.substring(0, 3000) : 'Handoff document not available'}
+
+---
+
+## Implementation Output${iteration > 1 ? ` (Iteration ${iteration})` : ''}
 
 ${currentImplementation}
 
-## Your Task
-Review the implementation. Check for:
-- Code quality and patterns
-- Security considerations
-- Error handling
-- Test coverage
-- Adherence to TPML standards
+---
+
+## Your Review Task
+
+Review the implementation against the sprint requirements above. Verify:
+- All sprint deliverables from the handoff are addressed
+- Code quality and patterns follow TPML standards
+- Security considerations are properly handled
+- Error handling is comprehensive
+- Test coverage is adequate
+- Implementation matches the architectural approach
 
 You MUST make a clear decision:
-- If implementation meets standards: State "APPROVED" clearly and explain why
-- If issues found: State "CHANGES REQUESTED" and list specific issues`;
+- If implementation meets ALL requirements: State "APPROVED" clearly and explain why
+- If issues found: State "CHANGES REQUESTED" and list specific issues with references to requirements`;
 
         return generateRoleResponse(
           'Reviewer',
           `Review Sprint ${sprintNumber} implementation for "${projectName}".${iteration > 1 ? ` This is iteration ${iteration} after previous feedback.` : ''}
+
+The sprint requirements are provided in the context above. Compare the implementation output against these requirements.
 
 Make a CLEAR DECISION: Either APPROVE to proceed to QA, or REQUEST CHANGES with specific issues listed.`,
           channel,
@@ -2343,26 +2512,48 @@ IMPORTANT: Fix the issues mentioned. DO NOT ask for clarification - just fix the
 
       // Step 10: Invoke QA to test
       const qaResponse = await step.run(`invoke-qa${iterSuffix}`, async () => {
-        const qaContext = `## Implementation Summary
+        const qaContext = `## Project: ${projectName}
+## Sprint ${sprintNumber}: ${sprintName}
+## Client: ${clientName}
+
+---
+
+## Sprint Requirements & Acceptance Criteria (from Handoff Document)
+
+${handoffContent ? handoffContent.substring(0, 2500) : 'Handoff document not available'}
+
+---
+
+## Implementation Summary
+
 ${currentImplementation}
 
-## Review Summary
+---
+
+## Code Review Summary
+
 ${reviewerResponse.response}
 
-## Your Task
-Test the implementation against acceptance criteria. Verify:
-- All features work as specified
-- Edge cases are handled
+---
+
+## Your QA Task
+
+Test the implementation against the acceptance criteria from the sprint requirements above. Verify:
+- All sprint deliverables are implemented and working
+- Features work as specified in the handoff
+- Edge cases and error conditions are handled
 - No regressions introduced
 - Performance is acceptable
 
 You MUST make a clear decision:
-- If all tests pass: State "PASSED" or "QA APPROVED" clearly
-- If bugs found: State "BUGS FOUND" or "FAILED" and list specific issues`;
+- If all acceptance criteria pass: State "PASSED" or "QA APPROVED" clearly
+- If bugs found: State "BUGS FOUND" or "FAILED" and list specific issues with references to requirements`;
 
         return generateRoleResponse(
           'QA',
-          `Sprint ${sprintNumber} for "${projectName}" has passed code review. Test the implementation.
+          `Sprint ${sprintNumber} for "${projectName}" has passed code review. Test the implementation against the acceptance criteria.
+
+The sprint requirements are provided in the context above. Verify each acceptance criterion is met.
 
 Make a CLEAR DECISION: Either PASS the tests, or document BUGS FOUND with specific issues.`,
           channel,
@@ -2382,20 +2573,116 @@ Make a CLEAR DECISION: Either PASS the tests, or document BUGS FOUND with specif
         ], kickoffMessage?.ts);
       });
 
-      // Step 12: Analyze QA's decision
-      const qaDecision = await step.run(`analyze-qa-decision${iterSuffix}`, async () => {
-        return analyzeRoleDecision('QA', qaResponse.response);
+      // Step 11b: Request human QA verification
+      // AI can suggest what to test, but human must actually verify
+      await step.run(`request-human-qa-verification${iterSuffix}`, async () => {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+
+        // Get the dev server URL if available
+        const sprint = await prisma.sprint.findFirst({
+          where: { projectId, number: sprintNumber },
+          select: { devServerUrl: true },
+        });
+
+        const devServerSection = sprint?.devServerUrl
+          ? `\n\n🔗 *Test the application:* <${sprint.devServerUrl}|Open Dev Server>`
+          : '\n\n_No dev server URL configured. Check with DevOps for testing environment._';
+
+        return postAsRole('QA', channel, 'Human QA verification required', [
+          {
+            type: 'header',
+            text: { type: 'plain_text', text: '🧪 Human QA Verification Required', emoji: true },
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `The AI QA has completed their testing analysis above.\n\n*Now a human needs to verify the implementation actually works:*\n• Test the features manually${devServerSection}\n• Verify acceptance criteria are met\n• Check for edge cases and bugs`,
+            },
+          },
+          {
+            type: 'divider',
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*After testing, confirm the results:*`,
+            },
+          },
+          {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '✅ QA Verified - All Good', emoji: true },
+                style: 'primary',
+                url: `${baseUrl}/api/workflow/qa-verify?projectId=${projectId}&sprintNumber=${sprintNumber}&verified=true`,
+              },
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '🐛 Issues Found', emoji: true },
+                style: 'danger',
+                url: `${baseUrl}/api/workflow/qa-verify?projectId=${projectId}&sprintNumber=${sprintNumber}&verified=false`,
+              },
+            ],
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Workflow paused - waiting for human verification_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
       });
 
-      if (!qaDecision.approved) {
-        // QA found bugs - loop back to Implementer
-        await step.run(`qa-finds-bugs${iterSuffix}`, async () => {
-          return postAsRole('QA', channel, 'Bugs found', [
+      // Step 11c: Wait for human QA verification
+      const humanQaResult = await step.waitForEvent(`wait-human-qa-verification${iterSuffix}`, {
+        event: 'qa/verified',
+        timeout: '24h', // Give humans time to test
+        match: 'data.projectId',
+      });
+
+      // Step 12: Process human QA decision
+      const qaDecision = {
+        approved: humanQaResult?.data?.verified === true,
+        issues: humanQaResult?.data?.issuesFound || '',
+      };
+
+      if (!humanQaResult) {
+        // Timeout - no human verification received
+        await step.run(`qa-timeout${iterSuffix}`, async () => {
+          return postAsRole('QA', channel, 'QA verification timeout', [
             {
               type: 'section',
               text: {
                 type: 'mrkdwn',
-                text: `🐛 *Bugs Found*\n\n${qaDecision.issues || 'Please fix the issues mentioned above.'}\n\nSending back to Implementer for fixes.`,
+                text: `⏰ *QA Verification Timeout*\n\nNo human verification received within 24 hours. Please click the verification buttons above or manually trigger QA verification.`,
+              },
+            },
+          ], kickoffMessage?.ts);
+        });
+
+        // Continue waiting or exit - for now we'll exit the workflow
+        return {
+          success: false,
+          projectId,
+          projectName,
+          error: 'QA verification timeout',
+          iterations: iteration,
+          messageTs: kickoffMessage?.ts,
+        };
+      }
+
+      if (!qaDecision.approved) {
+        // Human found issues - loop back to Implementer
+        await step.run(`qa-finds-bugs${iterSuffix}`, async () => {
+          return postAsRole('QA', channel, 'Issues reported by human tester', [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: `🐛 *Issues Found by Human Tester*\n\n${qaDecision.issues || 'Human tester found issues during manual testing.'}\n\nSending back to Implementer for fixes.`,
               },
             },
             {
@@ -2563,52 +2850,141 @@ Keep your response focused on deployment preparation. Be concise but thorough.`;
       };
     }
 
-    // Update sprint status to AWAITING_APPROVAL (human gate)
-    await step.run('update-sprint-status', async () => {
-      const sprint = await prisma.sprint.findFirst({
+    // Complete current sprint and set next sprint to AWAITING_APPROVAL
+    const nextSprintInfo = await step.run('complete-sprint-setup-next', async () => {
+      // Find and complete current sprint
+      const currentSprint = await prisma.sprint.findFirst({
         where: { projectId, number: sprintNumber },
       });
 
-      if (sprint) {
+      if (currentSprint) {
         await prisma.sprint.update({
-          where: { id: sprint.id },
-          data: { status: 'REVIEW' },
+          where: { id: currentSprint.id },
+          data: {
+            status: 'COMPLETED',
+            completedAt: new Date(),
+          },
         });
       }
+
+      // Find next sprint and set to AWAITING_APPROVAL
+      const nextSprint = await prisma.sprint.findFirst({
+        where: { projectId, number: sprintNumber + 1 },
+      });
+
+      if (nextSprint) {
+        await prisma.sprint.update({
+          where: { id: nextSprint.id },
+          data: { status: 'AWAITING_APPROVAL' },
+        });
+
+        return {
+          hasNext: true,
+          nextSprintId: nextSprint.id,
+          nextSprintNumber: nextSprint.number,
+          nextSprintName: nextSprint.name,
+          nextSprintGoal: nextSprint.goal,
+        };
+      }
+
+      // No more sprints - mark project complete
+      await prisma.project.update({
+        where: { id: projectId },
+        data: { status: 'COMPLETED' },
+      });
+
+      return { hasNext: false };
     });
 
-    // PM announces sprint ready for approval
+    // PM announces sprint completion with next steps
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    await step.run('announce-ready-for-approval', async () => {
+    await step.run('announce-sprint-complete', async () => {
       const project = await prisma.project.findUnique({
         where: { id: projectId },
         select: { slug: true },
       });
 
-      return postAsRole('PM', channel, 'Sprint ready for human approval', [
-        {
-          type: 'header',
-          text: { type: 'plain_text', text: '🎯 Sprint Ready for Approval', emoji: true },
-        },
-        {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) has completed the bot workflow:\n\n✅ Implementation complete\n✅ Code review passed\n✅ QA testing passed${iteration > 1 ? `\n\n_Completed in ${iteration} iteration(s)_` : ''}\n\n*Human approval is now required to proceed.*`,
+      // Build files summary for human review
+      const filesSummary = allFilesModified.length > 0
+        ? `\n\n📁 *Files Modified (${allFilesModified.length}):*\n${allFilesModified.slice(0, 10).map(f => `• \`${f}\``).join('\n')}${allFilesModified.length > 10 ? `\n_...and ${allFilesModified.length - 10} more_` : ''}`
+        : '';
+
+      if (nextSprintInfo.hasNext && 'nextSprintId' in nextSprintInfo) {
+        // More sprints to do - show approval buttons for next sprint
+        const { nextSprintId, nextSprintNumber, nextSprintName, nextSprintGoal } = nextSprintInfo;
+        return postAsRole('PM', channel, 'Sprint complete - next sprint ready', [
+          {
+            type: 'header',
+            text: { type: 'plain_text', text: '✅ Sprint Complete!', emoji: true },
           },
-        },
-        {
-          type: 'actions',
-          elements: [
-            {
-              type: 'button',
-              text: { type: 'plain_text', text: '✅ Approve Sprint', emoji: true },
-              style: 'primary',
-              url: `${baseUrl}/projects/${project?.slug || projectId}`,
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) is complete!\n\n✅ Implementation complete\n✅ Code review passed\n✅ QA testing passed${iteration > 1 ? `\n\n_Completed in ${iteration} iteration(s)_` : ''}${filesSummary}`,
             },
-          ],
-        },
-      ], kickoffMessage?.ts);
+          },
+          {
+            type: 'divider',
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `🎯 *Next Up:* Sprint ${nextSprintNumber} - ${nextSprintName || 'Upcoming Sprint'}\n${nextSprintGoal ? `*Goal:* ${nextSprintGoal}` : ''}\n\n⏳ *Human approval required to start Sprint ${nextSprintNumber}*`,
+            },
+          },
+          {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '📄 View Implementation', emoji: true },
+                url: `${baseUrl}/projects/${project?.slug || projectId}?tab=artifacts`,
+              },
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '✅ Approve & Start Next Sprint', emoji: true },
+                style: 'primary',
+                action_id: `sprint_approve_${nextSprintId}`,
+                value: JSON.stringify({ sprintId: nextSprintId, projectId, action: 'approve' }),
+              },
+            ],
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Sprint ${nextSprintNumber} is AWAITING_APPROVAL_` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      } else {
+        // Project complete!
+        return postAsRole('PM', channel, 'Project complete!', [
+          {
+            type: 'header',
+            text: { type: 'plain_text', text: '🎉 Project Complete!', emoji: true },
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*${projectName}* - All sprints have been completed!\n\nSprint ${sprintNumber} (${sprintName}) was the final sprint.\n\n✅ Implementation complete\n✅ Code review passed\n✅ QA testing passed${iteration > 1 ? `\n\n_Completed in ${iteration} iteration(s)_` : ''}${filesSummary}`,
+            },
+          },
+          {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '📄 View Project', emoji: true },
+                style: 'primary',
+                url: `${baseUrl}/projects/${project?.slug || projectId}`,
+              },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      }
     });
 
     console.log(`[Kickoff] Project ${projectName} workflow complete in ${iteration} iteration(s) - awaiting human approval`);
@@ -3079,6 +3455,184 @@ const handleSprintFeedback = inngest.createFunction(
   }
 );
 
+// ============================================================================
+// Worker Implementation Handler
+// ============================================================================
+
+/**
+ * Handle implementation work events
+ *
+ * This processes the worker/implementation.start event and performs
+ * the implementation using Claude API (since CLI can't run on Vercel).
+ *
+ * Sends worker/implementation.complete when done.
+ */
+const handleImplementationWork = inngest.createFunction(
+  {
+    id: 'handle-implementation-work',
+    name: 'Handle Implementation Work',
+  },
+  { event: 'worker/implementation.start' },
+  async ({ event, step }) => {
+    const {
+      projectId,
+      projectSlug,
+      projectName,
+      projectPath: _projectPath, // Reserved for future CLI worker integration
+      sprintNumber,
+      sprintName,
+      handoffContent,
+      iteration,
+      previousFeedback,
+      // Thread context from parent workflow
+      channel: eventChannel,
+      threadTs,
+    } = event.data;
+
+    // Use channel from event or fall back to default
+    const channel = eventChannel || process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+
+    // Create Anthropic client for this handler
+    const anthropic = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    });
+
+    // Step 1: Acknowledge receipt and post status (in the same thread)
+    await step.run('acknowledge-start', async () => {
+      return postAsRole('Implementer', channel, 'Worker received implementation task', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `🔧 *Implementation Worker Started*\n\n*Project:* ${projectName || projectSlug || projectId}\n*Sprint:* ${sprintNumber} - ${sprintName}\n*Iteration:* ${iteration || 1}\n\n_Analyzing requirements and generating implementation..._`,
+          },
+        },
+      ], threadTs);
+    });
+
+    // Step 2: Generate implementation using Claude API
+    const implementation = await step.run('generate-implementation', async () => {
+      const iterationContext = iteration > 1 && previousFeedback
+        ? `\n\n## Previous Feedback to Address\n\n${previousFeedback}`
+        : '';
+
+      const implementationPrompt = `You are the Implementer for TPML (Total Product Management, Ltd.).
+
+## Your Task
+Implement Sprint ${sprintNumber} (${sprintName}) based on the handoff document below.
+
+## Handoff Document
+${handoffContent || 'No handoff document provided'}
+${iterationContext}
+
+## Instructions
+1. Analyze the requirements from the handoff
+2. Plan the implementation approach
+3. List specific files you would create/modify
+4. Provide code snippets for key implementations
+5. Document any assumptions or decisions made
+
+## Output Format
+Provide a structured implementation report:
+
+### Implementation Summary
+[Brief overview of what was implemented]
+
+### Files Modified/Created
+- List each file with a brief description
+
+### Key Code Changes
+[Show important code snippets with explanations]
+
+### Testing Notes
+[What tests were added/modified]
+
+### Next Steps
+[Any remaining work or handoff notes]
+
+Be specific and detailed. This output will be reviewed by the Reviewer role.`;
+
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4000,
+        messages: [{ role: 'user', content: implementationPrompt }],
+      });
+
+      const content = response.content[0];
+      return content.type === 'text' ? content.text : 'Implementation generated';
+    });
+
+    // Step 3: Post progress update (in the same thread)
+    await step.run('post-progress', async () => {
+      const preview = implementation.substring(0, 500);
+      return postAsRole('Implementer', channel, 'Implementation in progress', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `⚙️ *Implementation Progress*\n\n${preview}${implementation.length > 500 ? '...' : ''}`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Full implementation: ${implementation.length} characters_` },
+          ],
+        },
+      ], threadTs);
+    });
+
+    // Step 4: Parse implementation to extract files modified
+    const filesModified = await step.run('parse-files', async () => {
+      const fileMatches = implementation.match(/[-*]\s+`?([a-zA-Z0-9_\-./]+\.[a-zA-Z]+)`?/g) || [];
+      return fileMatches
+        .map(m => m.replace(/^[-*]\s+`?/, '').replace(/`?$/, ''))
+        .filter(f => f.includes('.'))
+        .slice(0, 20); // Limit to 20 files
+    });
+
+    // Step 5: Send completion event
+    await step.run('send-completion', async () => {
+      await inngest.send({
+        name: 'worker/implementation.complete',
+        data: {
+          projectId,
+          projectSlug,
+          sprintNumber,
+          iteration: iteration || 1,
+          output: implementation,
+          summary: implementation.substring(0, 1000),
+          codeChanges: implementation,
+          filesModified,
+          success: true,
+        },
+      });
+      return { sent: true };
+    });
+
+    // Step 6: Post completion status (in the same thread)
+    await step.run('post-completion', async () => {
+      return postAsRole('Implementer', channel, 'Implementation complete', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `✅ *Implementation Complete*\n\n*Sprint:* ${sprintNumber} - ${sprintName}\n*Files:* ${filesModified.length} identified\n\n_Handing off to Reviewer..._`,
+          },
+        },
+      ], threadTs);
+    });
+
+    return {
+      success: true,
+      projectId,
+      sprintNumber,
+      filesModified,
+      outputLength: implementation.length,
+    };
+  }
+);
+
 // All functions to serve
 const functions = [
   testFunction,
@@ -3109,6 +3663,8 @@ const functions = [
   handleSprintRejected,
   handleProjectCompleted,
   handleSprintFeedback,
+  // Worker handlers
+  handleImplementationWork,
 ];
 
 // Create and export the serve handler
