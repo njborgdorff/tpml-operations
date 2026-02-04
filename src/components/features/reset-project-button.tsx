@@ -11,7 +11,7 @@ interface ResetProjectButtonProps {
   projectName: string;
 }
 
-export function ResetProjectButton({ projectId, projectName }: ResetProjectButtonProps) {
+export function ResetProjectButton({ projectId, projectName: _projectName }: ResetProjectButtonProps) {
   const router = useRouter();
   const [isResetting, setIsResetting] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
