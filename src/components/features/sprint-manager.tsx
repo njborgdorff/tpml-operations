@@ -63,6 +63,7 @@ interface SprintManagerProps {
 const statusColors: Record<string, string> = {
   PLANNED: 'bg-gray-100 text-gray-800',
   IN_PROGRESS: 'bg-blue-100 text-blue-800',
+  REVIEW: 'bg-purple-100 text-purple-800',
   COMPLETED: 'bg-green-100 text-green-800',
   BLOCKED: 'bg-red-100 text-red-800',
   AWAITING_APPROVAL: 'bg-amber-100 text-amber-800',
@@ -71,6 +72,7 @@ const statusColors: Record<string, string> = {
 const statusIcons: Record<string, React.ReactNode> = {
   PLANNED: <Clock className="h-4 w-4" />,
   IN_PROGRESS: <Loader2 className="h-4 w-4 animate-spin" />,
+  REVIEW: <FileCheck className="h-4 w-4" />,
   COMPLETED: <CheckCircle className="h-4 w-4" />,
   BLOCKED: <AlertCircle className="h-4 w-4" />,
   AWAITING_APPROVAL: <UserCheck className="h-4 w-4" />,
@@ -91,7 +93,7 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
   const [devUrlInput, setDevUrlInput] = useState('');
 
   const hasHandoff = artifacts.some(a => a.name === 'HANDOFF_CTO_TO_IMPLEMENTER.md');
-  const activeSprint = sprints.find(s => s.status === 'IN_PROGRESS');
+  const activeSprint = sprints.find(s => s.status === 'IN_PROGRESS' || s.status === 'REVIEW');
   const canKickoff = project.approvalStatus === 'APPROVED' && !hasHandoff && !activeSprint;
   const completedSprints = sprints.filter(s => s.status === 'COMPLETED').length;
   const totalSprints = sprints.length;
