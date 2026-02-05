@@ -1,95 +1,122 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
+import { useCreateProject } from '@/hooks/use-projects';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 interface CreateProjectDialogProps {
-  onCreateProject: (name: string, description?: string) => Promise<void>;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
-export function CreateProjectDialog({ onCreateProject }: CreateProjectDialogProps) {
-  const [isOpen, setIsOpen] = useState(false);
+export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [isCreating, setIsCreating] = useState(false);
+  
+  const createMutation = useCreateProject();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || isCreating) return;
+    
+    if (!name.trim()) return;
 
-    setIsCreating(true);
     try {
-      await onCreateProject(name.trim(), description.trim() || undefined);
+      await createMutation.mutateAsync({
+        name: name.trim(),
+        description: description.trim() || undefined
+      });
+      
+      // Reset form and close dialog
       setName('');
       setDescription('');
-      setIsOpen(false);
+      onOpenChange(false);
     } catch (error) {
+      // Error handling is managed by the mutation
       console.error('Failed to create project:', error);
-    } finally {
-      setIsCreating(false);
     }
   };
 
-  if (!isOpen) {
-    return (
-      <Button onClick={() => setIsOpen(true)} className="flex items-center gap-2">
-        <Plus className="h-4 w-4" />
-        New Project
-      </Button>
-    );
-  }
+  const handleClose = () => {
+    if (!createMutation.isPending) {
+      setName('');
+      setDescription('');
+      onOpenChange(false);
+    }
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
-        <h2 className="mb-4 text-lg font-semibold">Create New Project</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="name" className="block text-sm font-medium text-gray-700">
-              Project Name *
-            </label>
-            <Input
-              id="name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Enter project name"
-              required
-              className="mt-1"
-              autoFocus
-            />
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="sm:max-w-[425px]">
+        <form onSubmit={handleSubmit}>
+          <DialogHeader>
+            <DialogTitle>Create New Project</DialogTitle>
+            <DialogDescription>
+              Add a new project to your workspace. You can update the status and details later.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <label htmlFor="name" className="text-sm font-medium">
+                Project Name *
+              </label>
+              <Input
+                id="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Enter project name"
+                disabled={createMutation.isPending}
+                required
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <label htmlFor="description" className="text-sm font-medium">
+                Description
+              </label>
+              <Textarea
+                id="description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Optional project description"
+                disabled={createMutation.isPending}
+                rows={3}
+              />
+            </div>
           </div>
-          <div>
-            <label htmlFor="description" className="block text-sm font-medium text-gray-700">
-              Description
-            </label>
-            <Textarea
-              id="description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Enter project description (optional)"
-              className="mt-1"
-              rows={3}
-            />
-          </div>
-          <div className="flex justify-end space-x-2">
+          
+          <DialogFooter>
             <Button
               type="button"
               variant="outline"
-              onClick={() => setIsOpen(false)}
-              disabled={isCreating}
+              onClick={handleClose}
+              disabled={createMutation.isPending}
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={!name.trim() || isCreating}>
-              {isCreating ? 'Creating...' : 'Create Project'}
+            <Button 
+              type="submit"
+              disabled={!name.trim() || createMutation.isPending}
+            >
+              {createMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Create Project
             </Button>
-          </div>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -1,35 +1,24 @@
-import { Badge } from '@/components/ui/badge'
-import { ProjectStatus } from '@prisma/client'
+import React from 'react';
+import { ProjectStatus } from '@prisma/client';
+import { Badge } from '@/components/ui/badge';
+import { getStatusLabel, getStatusColor } from '@/lib/project-utils';
+import { cn } from '@/lib/utils';
 
 interface ProjectStatusBadgeProps {
-  status: ProjectStatus
+  status: ProjectStatus;
+  className?: string;
 }
 
-const statusConfig = {
-  [ProjectStatus.IN_PROGRESS]: {
-    label: 'In Progress',
-    variant: 'info' as const,
-  },
-  [ProjectStatus.COMPLETE]: {
-    label: 'Complete',
-    variant: 'success' as const,
-  },
-  [ProjectStatus.APPROVED]: {
-    label: 'Approved',
-    variant: 'default' as const,
-  },
-  [ProjectStatus.FINISHED]: {
-    label: 'Finished',
-    variant: 'secondary' as const,
-  },
-}
-
-export function ProjectStatusBadge({ status }: ProjectStatusBadgeProps) {
-  const config = statusConfig[status]
-  
+export function ProjectStatusBadge({ status, className }: ProjectStatusBadgeProps) {
   return (
-    <Badge variant={config.variant}>
-      {config.label}
+    <Badge 
+      variant="outline" 
+      className={cn(
+        getStatusColor(status),
+        className
+      )}
+    >
+      {getStatusLabel(status)}
     </Badge>
-  )
+  );
 }
