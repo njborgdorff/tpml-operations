@@ -1,10 +1,19 @@
 import { anthropic, AI_CONFIG } from './client';
 import { loadRolePrompt, loadStandards } from './roles';
-import type { IntakeData, PMPlan, CTOArchitecture, PlanningResult } from '@/types';
+import type { IntakeData, NewProjectData, PMPlan, CTOArchitecture, PlanningResult } from '@/types';
+
+// Type guard to check if intake is a NEW_PROJECT
+function isNewProjectData(intake: IntakeData): intake is NewProjectData {
+  return intake.projectType === 'NEW_PROJECT';
+}
 
 export async function runPlanningWorkflow(
   intake: IntakeData
 ): Promise<PlanningResult> {
+  // Planning workflow is only for NEW_PROJECT type
+  if (!isNewProjectData(intake)) {
+    throw new Error(`Planning workflow requires NEW_PROJECT type, got ${intake.projectType}`);
+  }
   // Step 1: PM Planning
   console.log('Starting PM planning...');
   const pmPlan = await runPMPlanning(intake);
@@ -23,7 +32,7 @@ export async function runPlanningWorkflow(
   return { pmPlan, ctoArchitecture, summary };
 }
 
-async function runPMPlanning(intake: IntakeData): Promise<PMPlan> {
+async function runPMPlanning(intake: NewProjectData): Promise<PMPlan> {
   const rolePrompt = await loadRolePrompt('pm');
 
   const systemPrompt = `${rolePrompt}
@@ -87,7 +96,7 @@ ${intake.constraints ? `Constraints: ${intake.constraints}` : ''}`
 }
 
 async function runCTOArchitecture(
-  intake: IntakeData,
+  intake: NewProjectData,
   pmPlan: PMPlan
 ): Promise<CTOArchitecture> {
   const [rolePrompt, standards] = await Promise.all([
@@ -159,7 +168,7 @@ ${pmPlan.backlog.filter(b => b.sprint === 1).map(b => `- ${b.feature}`).join('\n
 }
 
 async function generateSummary(
-  intake: IntakeData,
+  intake: NewProjectData,
   pmPlan: PMPlan,
   _ctoArchitecture: CTOArchitecture
 ): Promise<string> {
