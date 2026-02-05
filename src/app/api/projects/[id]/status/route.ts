@@ -1,111 +1,92 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { z } from "zod";
-import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { ProjectStatus } from "@prisma/client";
+import { NextRequest, NextResponse } from 'next/server'
+import { prisma } from '@/lib/prisma'
+import { ProjectStatus } from '@/types/project'
+import { getServerSession } from 'next-auth'
 
-const updateStatusSchema = z.object({
-  status: z.enum(["IN_PROGRESS", "COMPLETE", "APPROVED", "FINISHED"]),
-});
-
-interface RouteParams {
-  params: {
-    id: string;
-  };
-}
-
-export async function PATCH(request: NextRequest, { params }: RouteParams) {
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const session = await getServerSession()
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { id } = params;
-    
-    if (!id) {
+    const body = await request.json()
+    const { status } = body
+
+    if (!Object.values(ProjectStatus).includes(status)) {
       return NextResponse.json(
-        { error: "Project ID is required" },
+        { error: 'Invalid status' },
         { status: 400 }
-      );
+      )
     }
 
-    const body = await request.json();
-    const result = updateStatusSchema.safeParse(body);
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email }
+    })
 
-    if (!result.success) {
-      return NextResponse.json(
-        { error: "Invalid status", details: result.error.errors },
-        { status: 400 }
-      );
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
-    const { status } = result.data;
-
-    // Check if project exists and user owns it
-    const existingProject = await prisma.project.findFirst({
+    // Get current project to check ownership and current status
+    const currentProject = await prisma.project.findFirst({
       where: {
-        id,
-        userId: session.user.id,
-      },
-    });
+        id: params.id,
+        userId: user.id
+      }
+    })
 
-    if (!existingProject) {
+    if (!currentProject) {
       return NextResponse.json(
-        { error: "Project not found or access denied" },
+        { error: 'Project not found or access denied' },
         { status: 404 }
-      );
+      )
     }
 
-    // Validate status transition
-    if (status === "FINISHED" && existingProject.status !== "APPROVED") {
-      return NextResponse.json(
-        { error: "Only approved projects can be moved to finished" },
-        { status: 400 }
-      );
+    // Don't update if status is the same
+    if (currentProject.status === status) {
+      return NextResponse.json(currentProject)
     }
 
-    // If moving to FINISHED, set archivedAt
-    const updateData: any = {
-      status,
-      updatedAt: new Date(),
-    };
-
-    if (status === "FINISHED") {
-      updateData.archivedAt = new Date();
-    }
-
+    // Update project status
     const updatedProject = await prisma.project.update({
-      where: { id },
-      data: updateData,
+      where: { id: params.id },
+      data: {
+        status,
+        ...(status === ProjectStatus.FINISHED && {
+          archivedAt: new Date()
+        })
+      },
       include: {
         user: {
           select: {
             id: true,
             name: true,
-            email: true,
-          },
-        },
-      },
-    });
+            email: true
+          }
+        }
+      }
+    })
 
     // Create status history entry
     await prisma.projectStatusHistory.create({
       data: {
-        projectId: id,
-        oldStatus: existingProject.status,
+        projectId: params.id,
+        oldStatus: currentProject.status,
         newStatus: status,
-        changedBy: session.user.id,
-      },
-    });
+        changedBy: user.id,
+      }
+    })
 
-    return NextResponse.json(updatedProject);
+    return NextResponse.json(updatedProject)
   } catch (error) {
-    console.error("Error updating project status:", error);
+    console.error('Error updating project status:', error)
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: 'Failed to update project status' },
       { status: 500 }
-    );
+    )
   }
 }

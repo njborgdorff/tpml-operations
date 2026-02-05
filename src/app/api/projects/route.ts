@@ -1,161 +1,132 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { z } from "zod";
-import { prisma } from "@/lib/prisma";
-import { authOptions } from "@/lib/auth";
-import { ProjectStatus } from "@prisma/client";
-
-const createProjectSchema = z.object({
-  name: z.string().min(1, "Project name is required").max(100, "Project name too long"),
-  description: z.string().max(500, "Description too long").optional(),
-});
-
-const projectFiltersSchema = z.object({
-  status: z.enum(["IN_PROGRESS", "COMPLETE", "APPROVED", "FINISHED", "active", "finished"]).optional(),
-});
+import { NextRequest, NextResponse } from 'next/server'
+import { prisma } from '@/lib/prisma'
+import { ProjectStatus } from '@/types/project'
+import { getServerSession } from 'next-auth'
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const session = await getServerSession()
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { searchParams } = new URL(request.url);
-    const filterResult = projectFiltersSchema.safeParse({
-      status: searchParams.get("status"),
-    });
+    const { searchParams } = new URL(request.url)
+    const statusFilter = searchParams.get('status')
+    const showArchived = searchParams.get('showArchived') === 'true'
 
-    if (!filterResult.success) {
-      return NextResponse.json(
-        { error: "Invalid filters", details: filterResult.error.errors },
-        { status: 400 }
-      );
+    let statusArray: ProjectStatus[] | undefined
+    if (statusFilter) {
+      statusArray = statusFilter.split(',') as ProjectStatus[]
     }
 
-    const { status } = filterResult.data;
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email }
+    })
 
-    let statusFilter: ProjectStatus[] | undefined;
-    if (status === "active") {
-      statusFilter = ["IN_PROGRESS", "COMPLETE"];
-    } else if (status === "finished") {
-      statusFilter = ["FINISHED"];
-    } else if (status && status !== "active" && status !== "finished") {
-      statusFilter = [status as ProjectStatus];
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
     const projects = await prisma.project.findMany({
       where: {
-        userId: session.user.id,
-        ...(statusFilter && { status: { in: statusFilter } }),
+        userId: user.id,
+        ...(statusArray && { status: { in: statusArray } }),
+        ...(showArchived ? {} : { archivedAt: null })
       },
       include: {
         user: {
           select: {
             id: true,
             name: true,
-            email: true,
-          },
+            email: true
+          }
         },
+        statusHistory: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true
+              }
+            }
+          },
+          orderBy: { changedAt: 'desc' },
+          take: 5
+        }
       },
-      orderBy: {
-        updatedAt: "desc",
-      },
-    });
+      orderBy: { updatedAt: 'desc' }
+    })
 
-    return NextResponse.json(projects);
+    return NextResponse.json(projects)
   } catch (error) {
-    console.error("Error fetching projects:", error);
+    console.error('Error fetching projects:', error)
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: 'Failed to fetch projects' },
       { status: 500 }
-    );
+    )
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const session = await getServerSession()
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const body = await request.json();
-    const result = createProjectSchema.safeParse(body);
+    const body = await request.json()
+    const { name, description } = body
 
-    if (!result.success) {
+    if (!name) {
       return NextResponse.json(
-        { error: "Invalid data", details: result.error.errors },
+        { error: 'Project name is required' },
         { status: 400 }
-      );
+      )
     }
 
-    const { name, description } = result.data;
-
-    // Check for duplicate project names for this user
-    const existingProject = await prisma.project.findFirst({
-      where: {
-        userId: session.user.id,
-        name: name,
-        status: {
-          not: "FINISHED",
-        },
-      },
-    });
-
-    if (existingProject) {
-      return NextResponse.json(
-        { error: "A project with this name already exists" },
-        { status: 409 }
-      );
-    }
-
-    // Verify user exists
     const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-    });
+      where: { email: session.user.email }
+    })
 
     if (!user) {
-      return NextResponse.json(
-        { error: "User not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
     const project = await prisma.project.create({
       data: {
         name,
         description,
-        userId: session.user.id,
-        status: "IN_PROGRESS",
+        status: ProjectStatus.IN_PROGRESS,
+        userId: user.id,
       },
       include: {
         user: {
           select: {
             id: true,
             name: true,
-            email: true,
-          },
-        },
-      },
-    });
+            email: true
+          }
+        }
+      }
+    })
 
     // Create initial status history entry
     await prisma.projectStatusHistory.create({
       data: {
         projectId: project.id,
         oldStatus: null,
-        newStatus: "IN_PROGRESS",
-        changedBy: session.user.id,
-      },
-    });
+        newStatus: ProjectStatus.IN_PROGRESS,
+        changedBy: user.id,
+      }
+    })
 
-    return NextResponse.json(project, { status: 201 });
+    return NextResponse.json(project, { status: 201 })
   } catch (error) {
-    console.error("Error creating project:", error);
+    console.error('Error creating project:', error)
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: 'Failed to create project' },
       { status: 500 }
-    );
+    )
   }
 }

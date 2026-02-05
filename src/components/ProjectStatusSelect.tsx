@@ -1,45 +1,43 @@
-'use client';
-
-import { ProjectStatus, PROJECT_STATUS_LABELS } from '@/lib/types';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@/components/ui/select'
+import { ProjectStatus } from '@/types/project'
 
 interface ProjectStatusSelectProps {
-  value: ProjectStatus;
-  onValueChange: (value: ProjectStatus) => void;
-  disabled?: boolean;
-  className?: string;
+  value: ProjectStatus
+  onChange: (status: ProjectStatus) => void
+  disabled?: boolean
+  className?: string
 }
 
-export function ProjectStatusSelect({ 
-  value, 
-  onValueChange, 
-  disabled = false, 
-  className 
+const statusOptions = [
+  { value: ProjectStatus.IN_PROGRESS, label: 'In Progress' },
+  { value: ProjectStatus.COMPLETE, label: 'Complete' },
+  { value: ProjectStatus.APPROVED, label: 'Approved' },
+]
+
+export function ProjectStatusSelect({
+  value,
+  onChange,
+  disabled,
+  className
 }: ProjectStatusSelectProps) {
   return (
-    <Select 
-      value={value} 
-      onValueChange={onValueChange} 
-      disabled={disabled}
-    >
+    <Select value={value} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger className={className}>
-        <SelectValue>
-          {PROJECT_STATUS_LABELS[value]}
-        </SelectValue>
+        <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        {Object.entries(PROJECT_STATUS_LABELS).map(([status, label]) => (
-          <SelectItem key={status} value={status}>
-            {label}
+        {statusOptions.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
           </SelectItem>
         ))}
       </SelectContent>
     </Select>
-  );
+  )
 }
