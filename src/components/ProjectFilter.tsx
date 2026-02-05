@@ -1,66 +1,44 @@
-"use client"
+'use client'
 
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { ProjectStatus } from "@prisma/client"
+import { Button } from '@/components/ui/button'
 
-export type FilterType = 'all' | 'active' | 'archived' | ProjectStatus
+export type FilterType = 'all' | 'active' | 'finished'
 
 interface ProjectFilterProps {
-  currentFilter: FilterType
+  activeFilter: FilterType
   onFilterChange: (filter: FilterType) => void
-  projectCounts: {
+  counts?: {
     all: number
     active: number
-    archived: number
-    [ProjectStatus.IN_PROGRESS]: number
-    [ProjectStatus.COMPLETE]: number
-    [ProjectStatus.APPROVED]: number
+    finished: number
   }
 }
 
-const filterLabels: Record<FilterType, string> = {
-  all: 'All Projects',
-  active: 'Active',
-  archived: 'Finished',
-  [ProjectStatus.IN_PROGRESS]: 'In Progress',
-  [ProjectStatus.COMPLETE]: 'Complete',
-  [ProjectStatus.APPROVED]: 'Approved'
-}
-
-export function ProjectFilter({ currentFilter, onFilterChange, projectCounts }: ProjectFilterProps) {
-  const filters: FilterType[] = [
-    'all',
-    'active',
-    ProjectStatus.IN_PROGRESS,
-    ProjectStatus.COMPLETE,
-    ProjectStatus.APPROVED,
-    'archived'
+export function ProjectFilter({ activeFilter, onFilterChange, counts }: ProjectFilterProps) {
+  const filters: Array<{ key: FilterType; label: string; description: string }> = [
+    { key: 'all', label: 'All Projects', description: 'Show all projects regardless of status' },
+    { key: 'active', label: 'Active Projects', description: 'In Progress and Complete projects' },
+    { key: 'finished', label: 'Finished Projects', description: 'Archived projects' }
   ]
 
   return (
-    <div className="flex flex-wrap gap-2 mb-6">
-      {filters.map((filter) => {
-        const count = projectCounts[filter] || 0
-        const isActive = currentFilter === filter
-        
-        return (
-          <Button
-            key={filter}
-            variant={isActive ? "default" : "outline"}
-            onClick={() => onFilterChange(filter)}
-            className="flex items-center gap-2"
-          >
-            {filterLabels[filter]}
-            <Badge 
-              variant={isActive ? "secondary" : "outline"}
-              className="ml-1"
-            >
-              {count}
-            </Badge>
-          </Button>
-        )
-      })}
+    <div className="flex flex-wrap gap-2 p-4 bg-muted/50 rounded-lg">
+      {filters.map((filter) => (
+        <Button
+          key={filter.key}
+          variant={activeFilter === filter.key ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => onFilterChange(filter.key)}
+          className="flex items-center gap-2"
+        >
+          {filter.label}
+          {counts && (
+            <span className="ml-1 px-1.5 py-0.5 text-xs bg-background/20 rounded">
+              {counts[filter.key]}
+            </span>
+          )}
+        </Button>
+      ))}
     </div>
   )
 }

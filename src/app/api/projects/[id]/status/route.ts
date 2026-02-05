@@ -1,111 +1,95 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { prisma } from '@/lib/prisma';
-import { authOptions } from '@/lib/auth';
-import { ProjectStatus } from '@prisma/client';
+import { NextRequest, NextResponse } from 'next/server'
+import { getSession } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
+import { ProjectStatus } from '@prisma/client'
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const session = await getSession()
+    
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email }
-    });
+    const body = await request.json()
+    const { status } = body
 
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-
-    const projectId = params.id;
-    const body = await request.json();
-    const { status } = body;
-
-    // Validate status
-    if (!Object.values(ProjectStatus).includes(status)) {
+    if (!status || !Object.values(ProjectStatus).includes(status)) {
       return NextResponse.json(
-        { error: 'Invalid status' },
+        { error: 'Valid status is required' }, 
         { status: 400 }
-      );
+      )
     }
 
-    // Get current project
-    const currentProject = await prisma.project.findUnique({
-      where: { id: projectId },
-      include: {
-        user: true
+    // Verify project exists and user owns it
+    const existingProject = await prisma.project.findFirst({
+      where: {
+        id: params.id,
+        userId: session.user.id
       }
-    });
+    })
 
-    if (!currentProject) {
+    if (!existingProject) {
       return NextResponse.json(
-        { error: 'Project not found' },
+        { error: 'Project not found or access denied' }, 
         { status: 404 }
-      );
+      )
     }
 
-    // Check if user owns the project
-    if (currentProject.userId !== user.id) {
+    // Don't allow updating if status is the same
+    if (existingProject.status === status) {
       return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      );
+        { error: 'Project is already in this status' }, 
+        { status: 400 }
+      )
     }
 
-    // Update project status
-    const updatedProject = await prisma.project.update({
-      where: { id: projectId },
-      data: {
-        status,
-        archivedAt: status === ProjectStatus.FINISHED ? new Date() : null
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true
-          }
+    // Update project status and create history entry in transaction
+    const updatedProject = await prisma.$transaction(async (tx) => {
+      const project = await tx.project.update({
+        where: { id: params.id },
+        data: {
+          status: status as ProjectStatus,
+          archivedAt: status === ProjectStatus.FINISHED ? new Date() : null
         },
-        statusHistory: {
-          orderBy: {
-            changedAt: 'desc'
+        include: {
+          user: {
+            select: { id: true, name: true, email: true }
           },
-          take: 5,
-          include: {
-            changedBy: {
-              select: {
-                id: true,
-                name: true,
-                email: true
+          statusHistory: {
+            orderBy: { changedAt: 'desc' },
+            take: 1,
+            include: {
+              user: {
+                select: { id: true, name: true, email: true }
               }
             }
           }
         }
-      }
-    });
+      })
 
-    // Create status history entry
-    await prisma.projectStatusHistory.create({
-      data: {
-        projectId,
-        oldStatus: currentProject.status,
-        newStatus: status,
-        changedById: user.id
-      }
-    });
+      // Create status history entry
+      await tx.projectStatusHistory.create({
+        data: {
+          projectId: params.id,
+          oldStatus: existingProject.status,
+          newStatus: status as ProjectStatus,
+          changedBy: session.user.id
+        }
+      })
 
-    return NextResponse.json({ project: updatedProject });
+      return project
+    })
+
+    return NextResponse.json(updatedProject)
   } catch (error) {
-    console.error('Error updating project status:', error);
+    console.error('Error updating project status:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Internal server error' }, 
       { status: 500 }
-    );
+    )
   }
 }
