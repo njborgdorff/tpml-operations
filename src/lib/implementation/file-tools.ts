@@ -158,7 +158,14 @@ Your job is to ACTUALLY IMPLEMENT the features described in the handoff document
 - Components use shadcn/ui conventions
 - API routes are in src/app/api/
 - Components are in src/components/
-- Database schema is in prisma/schema.prisma`;
+- Database schema is in prisma/schema.prisma
+
+## CRITICAL: Complete Code Only
+- Every file you create MUST be complete with ALL closing brackets, braces, and tags
+- Never truncate code - if a file is too long, split into multiple smaller files
+- Always verify your code has matching opening and closing: { }, ( ), < >, [ ]
+- Include all necessary imports at the top of each file
+- End React components with proper export statements`;
 
   const userPrompt = hasExistingCode && hasFeedback
     ? `## FIX TASK - Address Feedback for Sprint ${sprintNumber} (${sprintName})
@@ -173,6 +180,8 @@ ${feedbackContext}
 3. Use edit_file to fix ONLY what needs to be fixed
 4. Add any NEW files needed (like tests, migrations) with create_file
 5. Call implementation_complete with a summary of what you fixed
+
+IMPORTANT: Each file must be COMPLETE - include ALL closing brackets and tags. Never truncate.
 
 DO NOT recreate all files. Only modify what needs to change.`
     : `## Your Task
@@ -189,6 +198,11 @@ ${feedbackContext}
 3. Create all necessary files for the feature to work
 4. When done, call implementation_complete with a summary
 
+IMPORTANT: Each file must be COMPLETE - include ALL closing brackets, braces, and JSX tags.
+- If a file would be very long, split it into smaller focused files
+- Never leave code incomplete or truncated
+- Always include proper imports and exports
+
 Start implementing now. Use the tools to create real files.`;
 
   const messages: Anthropic.MessageParam[] = [
@@ -204,7 +218,7 @@ Start implementing now. Use the tools to create real files.`;
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 8000,
+      max_tokens: 16000, // Increased to prevent truncation
       system: systemPrompt,
       tools: implementationTools,
       messages,
@@ -317,13 +331,91 @@ export interface ValidationResult {
 }
 
 /**
+ * Check if code appears to be truncated by looking for unbalanced brackets and common truncation patterns.
+ */
+function detectTruncation(content: string, filePath: string): string | null {
+  if (!content) return null;
+
+  // Count brackets
+  const openBraces = (content.match(/\{/g) || []).length;
+  const closeBraces = (content.match(/\}/g) || []).length;
+  const openParens = (content.match(/\(/g) || []).length;
+  const closeParens = (content.match(/\)/g) || []).length;
+
+  // Check for significant imbalance (allow small variance for regex/strings)
+  if (openBraces - closeBraces > 2) {
+    return `${filePath} has ${openBraces - closeBraces} unclosed curly braces - file appears truncated`;
+  }
+  if (openParens - closeParens > 3) {
+    return `${filePath} has ${openParens - closeParens} unclosed parentheses - file appears truncated`;
+  }
+
+  // Check for JSX/TSX files with unclosed tags
+  if (filePath.endsWith('.tsx') || filePath.endsWith('.jsx')) {
+    const openTags = (content.match(/<[A-Z][a-zA-Z]*(?:\s|>)/g) || []).length;
+    const closeTags = (content.match(/<\/[A-Z][a-zA-Z]*>/g) || []).length;
+    const selfClosingTags = (content.match(/<[A-Z][a-zA-Z]*[^>]*\/>/g) || []).length;
+
+    if (openTags - closeTags - selfClosingTags > 2) {
+      return `${filePath} has unclosed JSX tags - file appears truncated`;
+    }
+  }
+
+  // Check for common truncation patterns
+  const lines = content.split('\n');
+  const lastLine = lines[lines.length - 1]?.trim() || '';
+  const secondLastLine = lines[lines.length - 2]?.trim() || '';
+
+  // File ends mid-statement
+  const truncationPatterns = [
+    /^(const|let|var|function|async|import|export|return|if|else|for|while|try|catch)\s*$/,
+    /[,{(\[:=]\s*$/,  // Ends with operator expecting more
+    /^\s*\.\.\.\s*$/,  // Ends with spread operator alone
+  ];
+
+  for (const pattern of truncationPatterns) {
+    if (pattern.test(lastLine) || pattern.test(secondLastLine)) {
+      return `${filePath} ends mid-statement - file appears truncated`;
+    }
+  }
+
+  // File doesn't have proper ending for its type
+  if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) {
+    if (!content.includes('export') && content.length > 100) {
+      return `${filePath} has no export statement - may be truncated or incomplete`;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Validate generated code for common build errors before committing.
- * Uses Claude to analyze for TypeScript errors, routing conflicts, missing imports, etc.
+ * First checks for truncation, then uses Claude to analyze for other errors.
  */
 export async function validateGeneratedCode(
   operations: FileOperation[],
   existingFilesList?: string[]
 ): Promise<ValidationResult> {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // First pass: Quick truncation detection (no API call needed)
+  for (const op of operations) {
+    if (op.content) {
+      const truncationError = detectTruncation(op.content, op.path);
+      if (truncationError) {
+        errors.push(truncationError);
+      }
+    }
+  }
+
+  // If we found truncation errors, return immediately without API call
+  if (errors.length > 0) {
+    console.log(`[Validation] Found ${errors.length} truncation errors, skipping AI validation`);
+    return { valid: false, errors, warnings };
+  }
+
   const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
   });
@@ -331,7 +423,7 @@ export async function validateGeneratedCode(
   // Build a summary of the files being created/modified
   const filesSummary = operations.map(op => {
     const preview = op.content?.substring(0, 2000) || '';
-    return `### ${op.type.toUpperCase()}: ${op.path}\n\`\`\`\n${preview}${(op.content?.length || 0) > 2000 ? '\n... (truncated)' : ''}\n\`\`\``;
+    return `### ${op.type.toUpperCase()}: ${op.path}\n\`\`\`\n${preview}${(op.content?.length || 0) > 2000 ? '\n... (truncated for review)' : ''}\n\`\`\``;
   }).join('\n\n');
 
   const existingFilesContext = existingFilesList?.length
