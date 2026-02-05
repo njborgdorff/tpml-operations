@@ -307,6 +307,106 @@ Start implementing now. Use the tools to create real files.`;
 }
 
 /**
+ * Validation result for code analysis
+ */
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  fixes?: FileOperation[];
+}
+
+/**
+ * Validate generated code for common build errors before committing.
+ * Uses Claude to analyze for TypeScript errors, routing conflicts, missing imports, etc.
+ */
+export async function validateGeneratedCode(
+  operations: FileOperation[],
+  existingFilesList?: string[]
+): Promise<ValidationResult> {
+  const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+
+  // Build a summary of the files being created/modified
+  const filesSummary = operations.map(op => {
+    const preview = op.content?.substring(0, 2000) || '';
+    return `### ${op.type.toUpperCase()}: ${op.path}\n\`\`\`\n${preview}${(op.content?.length || 0) > 2000 ? '\n... (truncated)' : ''}\n\`\`\``;
+  }).join('\n\n');
+
+  const existingFilesContext = existingFilesList?.length
+    ? `\n\nExisting files in the project:\n${existingFilesList.slice(0, 50).map(f => `- ${f}`).join('\n')}`
+    : '';
+
+  const prompt = `You are a build validator. Analyze the following file operations for a Next.js 14 project with TypeScript.
+
+## Files to validate:
+
+${filesSummary}
+${existingFilesContext}
+
+## Check for these common errors:
+
+1. **Next.js Routing Conflicts**: Multiple dynamic routes at the same level (e.g., [id] and [slug] in the same directory)
+2. **Missing Imports**: Components or functions used but not imported
+3. **TypeScript Errors**: Type mismatches, missing type annotations for exports
+4. **Syntax Errors**: Malformed JSX, unclosed brackets, invalid JavaScript
+5. **Missing Dependencies**: Using packages that aren't typically in a Next.js project
+6. **Invalid File Paths**: Files in wrong directories for Next.js conventions
+
+## Response Format:
+
+Respond with a JSON object (no markdown, just raw JSON):
+{
+  "valid": true/false,
+  "errors": ["critical error 1", "critical error 2"],
+  "warnings": ["warning 1", "warning 2"]
+}
+
+- "errors" = issues that WILL cause build failure
+- "warnings" = potential issues or best practice violations
+- Set "valid" to false if there are any errors`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const textContent = response.content.find(
+      (block): block is Anthropic.TextBlock => block.type === 'text'
+    );
+
+    if (!textContent) {
+      return { valid: true, errors: [], warnings: ['Could not parse validation response'] };
+    }
+
+    // Try to parse JSON response
+    const text = textContent.text.trim();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const result = JSON.parse(jsonMatch[0]);
+      return {
+        valid: result.valid ?? true,
+        errors: result.errors || [],
+        warnings: result.warnings || [],
+      };
+    }
+
+    return { valid: true, errors: [], warnings: ['Could not parse validation response'] };
+  } catch (error) {
+    console.error('[Validation] Error during code validation:', error);
+    // Don't block on validation errors - return valid with a warning
+    return {
+      valid: true,
+      errors: [],
+      warnings: [`Validation check failed: ${error instanceof Error ? error.message : 'Unknown error'}`],
+    };
+  }
+}
+
+/**
  * Apply file operations via GitHub API
  */
 export async function applyOperationsViaGitHub(

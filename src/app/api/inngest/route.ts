@@ -12,7 +12,7 @@ import { serve } from 'inngest/next';
 import { Inngest } from 'inngest';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaClient } from '@prisma/client';
-import { runImplementation, applyOperationsViaGitHub, FileOperation } from '@/lib/implementation/file-tools';
+import { runImplementation, applyOperationsViaGitHub, validateGeneratedCode, FileOperation, ValidationResult } from '@/lib/implementation/file-tools';
 
 // Note: Implementation now uses Claude tool_use to generate actual file operations
 // These can be applied via GitHub API (serverless) or local worker
@@ -2243,6 +2243,45 @@ Keep your response focused on architecture validation. Be concise but thorough.`
       targetRepo = targetRepo || githubRepo;
 
       let commitResult: { success: boolean; commitSha?: string; error?: string } = { success: false };
+      let validationResult: ValidationResult = { valid: true, errors: [], warnings: [] };
+
+      // Validate code before committing
+      if (implementationResult.operations && implementationResult.operations.length > 0) {
+        validationResult = await step.run(`validate-code${iterSuffix}`, async () => {
+          console.log(`[Validation] Validating ${implementationResult.operations.length} file operations`);
+          return validateGeneratedCode(implementationResult.operations);
+        });
+
+        // Post validation results
+        if (!validationResult.valid || validationResult.warnings.length > 0) {
+          await step.run(`post-validation-result${iterSuffix}`, async () => {
+            const errorList = validationResult.errors.length > 0
+              ? `\n\n*Errors:*\n${validationResult.errors.map(e => `• ${e}`).join('\n')}`
+              : '';
+            const warningList = validationResult.warnings.length > 0
+              ? `\n\n*Warnings:*\n${validationResult.warnings.map(w => `• ${w}`).join('\n')}`
+              : '';
+
+            return postAsRole('Implementer', channel, 'Code validation results', [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: validationResult.valid
+                    ? `⚠️ *Code Validation: Passed with Warnings*${warningList}`
+                    : `❌ *Code Validation: Failed*\n\nBuild errors detected. Code will not be committed until fixed.${errorList}${warningList}`,
+                },
+              },
+            ], kickoffMessage?.ts);
+          });
+        }
+
+        // If validation failed, add errors to feedback and continue to next iteration
+        if (!validationResult.valid) {
+          currentImplementation = `## BUILD VALIDATION FAILED\n\nThe following errors must be fixed before the code can be committed:\n\n${validationResult.errors.map(e => `- ${e}`).join('\n')}\n\n## Previous Implementation Summary:\n${implementationResult.output}`;
+          continue; // Skip commit and go to next iteration for fixes
+        }
+      }
 
       if (implementationResult.operations && implementationResult.operations.length > 0 && targetRepo) {
         commitResult = await step.run(`commit-to-github${iterSuffix}`, async () => {
@@ -2582,8 +2621,33 @@ DO NOT start a new implementation. EDIT the existing files to fix the issues.`;
           }
         }
 
-        // Commit fix to GitHub if we have operations
-        if (fixResult.operations && fixResult.operations.length > 0 && targetRepo) {
+        // Validate fixes before committing
+        let fixValidation: ValidationResult = { valid: true, errors: [], warnings: [] };
+        if (fixResult.operations && fixResult.operations.length > 0) {
+          fixValidation = await step.run(`validate-fix${iterSuffix}`, async () => {
+            console.log(`[Validation] Validating ${fixResult.operations.length} fix operations`);
+            return validateGeneratedCode(fixResult.operations);
+          });
+
+          if (!fixValidation.valid) {
+            await step.run(`post-fix-validation-failed${iterSuffix}`, async () => {
+              return postAsRole('Implementer', channel, 'Fix validation failed', [
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: `❌ *Fix Validation Failed*\n\nThe fixes have build errors:\n${fixValidation.errors.map(e => `• ${e}`).join('\n')}\n\nWill retry in next iteration.`,
+                  },
+                },
+              ], kickoffMessage?.ts);
+            });
+            // Continue to next iteration - the validation errors will be addressed
+            continue;
+          }
+        }
+
+        // Commit fix to GitHub if we have valid operations
+        if (fixResult.operations && fixResult.operations.length > 0 && targetRepo && fixValidation.valid) {
           const fixCommitResult = await step.run(`commit-fix-to-github${iterSuffix}`, async () => {
             const branchName = `sprint-${sprintNumber}-implementation`;
             const commitMessage = `[Sprint ${sprintNumber}] Fix reviewer feedback - Iteration ${iteration}
@@ -2905,8 +2969,33 @@ DO NOT start a new implementation. EDIT the existing files to fix the bugs.`;
           }
         }
 
-        // Commit bugfix to GitHub if we have operations
-        if (bugfixResult.operations && bugfixResult.operations.length > 0 && targetRepo) {
+        // Validate bugfixes before committing
+        let bugfixValidation: ValidationResult = { valid: true, errors: [], warnings: [] };
+        if (bugfixResult.operations && bugfixResult.operations.length > 0) {
+          bugfixValidation = await step.run(`validate-bugfix${iterSuffix}`, async () => {
+            console.log(`[Validation] Validating ${bugfixResult.operations.length} bugfix operations`);
+            return validateGeneratedCode(bugfixResult.operations);
+          });
+
+          if (!bugfixValidation.valid) {
+            await step.run(`post-bugfix-validation-failed${iterSuffix}`, async () => {
+              return postAsRole('Implementer', channel, 'Bugfix validation failed', [
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: `❌ *Bugfix Validation Failed*\n\nThe bugfixes have build errors:\n${bugfixValidation.errors.map(e => `• ${e}`).join('\n')}\n\nWill retry in next iteration.`,
+                  },
+                },
+              ], kickoffMessage?.ts);
+            });
+            // Continue to next iteration - the validation errors will be addressed
+            continue;
+          }
+        }
+
+        // Commit bugfix to GitHub if we have valid operations
+        if (bugfixResult.operations && bugfixResult.operations.length > 0 && targetRepo && bugfixValidation.valid) {
           const bugfixCommitResult = await step.run(`commit-bugfix-to-github${iterSuffix}`, async () => {
             const branchName = `sprint-${sprintNumber}-implementation`;
             const commitMessage = `[Sprint ${sprintNumber}] Fix QA bugs - Iteration ${iteration}
