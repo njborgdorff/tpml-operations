@@ -294,28 +294,18 @@ Project approved by owner. Ready to begin Sprint 1 implementation.
 
 ${ownerDecisions ? `## Owner Decisions\n\n${ownerDecisions}\n\n` : ''}
 
-## Backlog Reference
+## Quick Reference - Sprint 1 Deliverables
 
-The full product backlog is available in BACKLOG.md. Focus on Sprint 1 items first.
-
-Key Sprint 1 deliverables from the backlog:
 ${sprint1Items}
 
-## Architecture Reference
+## Quick Reference - Tech Stack
 
-The full architecture is available in ARCHITECTURE.md.
-
-### Tech Stack Summary
 ${techStack}
 
 ## Action Items for Implementer
 
-- [ ] Review BACKLOG.md for Sprint 1 requirements
-- [ ] Review ARCHITECTURE.md for technical decisions
-- [ ] Set up development environment if needed
 - [ ] Implement Sprint 1 features in priority order
 - [ ] Write tests for new functionality
-- [ ] Update PROJECT_STATUS.md as you progress
 - [ ] Create handoff to Reviewer when ready
 
 ## Implementation Notes
@@ -324,7 +314,24 @@ ${techStack}
 2. Implement features in priority order (P0 → P1 → P2)
 3. Write unit tests alongside implementation
 4. Keep commits atomic and well-described
-5. Update docs as needed
+
+---
+
+# FULL BACKLOG.md
+
+The complete product backlog is provided below. Use this for Sprint 1 requirements.
+
+${backlogContent}
+
+---
+
+# FULL ARCHITECTURE.md
+
+The complete architecture document is provided below. Use this for technical decisions.
+
+${architectureContent}
+
+---
 
 ## Next Steps
 
