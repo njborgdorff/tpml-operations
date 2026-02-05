@@ -2,10 +2,18 @@
  * Slack Interactions Webhook
  *
  * Handles interactive components (buttons, modals, etc.) from Slack.
- * Simplified version for testing without Inngest dependency.
+ * Sends Inngest events directly to trigger workflows.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { Inngest } from 'inngest';
+import { PrismaClient } from '@prisma/client';
+
+// Initialize Inngest client
+const inngest = new Inngest({ id: 'tpml-code-team' });
+
+// Initialize Prisma client
+const prisma = new PrismaClient();
 
 // ============================================================================
 // Types
@@ -99,46 +107,166 @@ export async function POST(request: NextRequest) {
 
           console.log(`[Slack Interactions] Sprint ${isApproval ? 'approval' : 'rejection'} for:`, sprintId);
 
-          // Call the approve/reject API endpoint
-          const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-          const apiResponse = await fetch(`${baseUrl}/api/sprints/${sprintId}/approve`, {
-            method: isApproval ? 'POST' : 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              approvalNotes: isApproval ? `Approved via Slack by ${payload.user.username}` : undefined,
-              rejectionReason: !isApproval ? `Rejected via Slack by ${payload.user.username}` : undefined,
-            }),
-          });
+          try {
+            // Get sprint details from database
+            const sprint = await prisma.sprint.findUnique({
+              where: { id: sprintId },
+              include: {
+                project: {
+                  include: { client: true, artifacts: true },
+                },
+              },
+            });
 
-          const apiResult = await apiResponse.json();
-          console.log('[Slack Interactions] API response:', apiResult);
+            if (!sprint) {
+              console.log('[Slack Interactions] Sprint not found:', sprintId);
+              if (payload.response_url) {
+                await fetch(payload.response_url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    replace_original: false,
+                    text: `❌ Sprint not found: ${sprintId}`,
+                  }),
+                });
+              }
+              continue;
+            }
 
-          // Send acknowledgment to Slack
+            if (sprint.status !== 'AWAITING_APPROVAL') {
+              console.log('[Slack Interactions] Sprint not awaiting approval:', sprint.status);
+              if (payload.response_url) {
+                await fetch(payload.response_url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    replace_original: false,
+                    text: `⚠️ Sprint is not awaiting approval. Current status: ${sprint.status}`,
+                  }),
+                });
+              }
+              continue;
+            }
+
+            if (isApproval) {
+              // Update sprint status to IN_PROGRESS
+              await prisma.sprint.update({
+                where: { id: sprintId },
+                data: {
+                  status: 'IN_PROGRESS',
+                  startedAt: new Date(),
+                },
+              });
+
+              // Get artifacts for handoff
+              const backlogArtifact = sprint.project.artifacts.find(a => a.name === 'BACKLOG.md');
+              const architectureArtifact = sprint.project.artifacts.find(a => a.name === 'ARCHITECTURE.md');
+              const handoffArtifact = sprint.project.artifacts.find(a => a.type === 'HANDOFF');
+
+              // Send sprint/approved event
+              await inngest.send({
+                name: 'sprint/approved',
+                data: {
+                  projectId: sprint.projectId,
+                  projectName: sprint.project.name,
+                  projectSlug: sprint.project.slug,
+                  clientName: sprint.project.client.name,
+                  sprintId: sprint.id,
+                  sprintNumber: sprint.number,
+                  sprintName: sprint.name,
+                  sprintGoal: sprint.goal,
+                  approvalNotes: `Approved via Slack by ${payload.user.username}`,
+                  backlogContent: backlogArtifact?.content,
+                  architectureContent: architectureArtifact?.content,
+                  handoffContent: handoffArtifact?.content,
+                },
+              });
+
+              console.log(`[Slack Interactions] Sprint ${sprint.number} approved, event sent`);
+            } else {
+              // Update sprint status back to PLANNED
+              await prisma.sprint.update({
+                where: { id: sprintId },
+                data: {
+                  status: 'PLANNED',
+                },
+              });
+
+              // Send sprint/rejected event
+              await inngest.send({
+                name: 'sprint/rejected',
+                data: {
+                  projectId: sprint.projectId,
+                  projectName: sprint.project.name,
+                  sprintId: sprint.id,
+                  sprintNumber: sprint.number,
+                  sprintName: sprint.name,
+                  rejectionReason: `Rejected via Slack by ${payload.user.username}`,
+                },
+              });
+
+              console.log(`[Slack Interactions] Sprint ${sprint.number} rejected, event sent`);
+            }
+
+            // Send acknowledgment to Slack
+            if (payload.response_url) {
+              const responseText = isApproval
+                ? `✅ Sprint ${sprint.number} approved and started by <@${payload.user.id}>!\n\nThe Implementer will now begin working on this sprint.`
+                : `⚠️ Sprint ${sprint.number} rejected by <@${payload.user.id}>.\n\nSprint has been reset to PLANNED for re-scoping.`;
+
+              await fetch(payload.response_url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  replace_original: false,
+                  text: responseText,
+                }),
+              });
+            }
+          } catch (err) {
+            console.error('[Slack Interactions] Error handling sprint action:', err);
+            if (payload.response_url) {
+              await fetch(payload.response_url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  replace_original: false,
+                  text: `❌ Error processing action: ${err instanceof Error ? err.message : 'Unknown error'}`,
+                }),
+              });
+            }
+          }
+          continue;
+        }
+
+        // Handle handoff acknowledgment
+        if (action.action_id.startsWith('handoff_ack_')) {
+          const handoffId = action.action_id.replace('handoff_ack_', '');
+          console.log('[Slack Interactions] Handoff acknowledged:', handoffId);
+
           if (payload.response_url) {
-            const responseText = isApproval
-              ? `✅ Sprint approved and started by <@${payload.user.id}>. Implementer will be notified.`
-              : `⚠️ Sprint rejected by <@${payload.user.id}>. Reset to PLANNED for re-scoping.`;
-
             await fetch(payload.response_url, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 replace_original: false,
-                text: responseText,
+                text: `✅ Handoff acknowledged by <@${payload.user.id}>`,
               }),
             });
           }
           continue;
         }
 
-        // Send a response to Slack for other actions
+        // Handle other button actions with generic acknowledgment
         if (payload.response_url) {
           let responseText = `✅ Action received: ${action.action_id}`;
 
           if (action.action_id.includes('ack')) {
             responseText = `✅ Acknowledged by <@${payload.user.id}>`;
           } else if (action.action_id.includes('question')) {
-            responseText = `❓ Question requested by <@${payload.user.id}>`;
+            responseText = `❓ Question noted by <@${payload.user.id}>. Please respond in the thread.`;
+          } else if (action.action_id.includes('feedback')) {
+            responseText = `📝 Feedback requested by <@${payload.user.id}>. Please use the project page to submit feedback.`;
           }
 
           console.log('[Slack Interactions] Sending response to:', payload.response_url);
