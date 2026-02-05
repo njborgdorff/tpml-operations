@@ -1,58 +1,66 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { ProjectStatus } from '@prisma/client'
+import { getServerSession } from 'next-auth'
+import { prisma } from '@/lib/prisma'
+import { ProjectStatus } from '@/types/project'
+import { authOptions } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url)
-    const status = searchParams.get('status')
+    const session = await getServerSession(authOptions)
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const searchParams = request.nextUrl.searchParams
+    const statusParam = searchParams.get('status')
+    const includeFinished = searchParams.get('includeFinished') === 'true'
     const userId = searchParams.get('userId')
 
-    // Build where clause based on filters
-    let whereClause: any = {}
-
+    // Build filter conditions
+    const where: any = {}
+    
     if (userId) {
-      whereClause.userId = userId
+      where.userId = userId
     }
 
-    if (status) {
-      if (status === 'ACTIVE') {
-        // Active projects are IN_PROGRESS and COMPLETE
-        whereClause.status = {
-          in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE]
+    if (statusParam) {
+      if (statusParam.includes(',')) {
+        // Multiple statuses
+        where.status = {
+          in: statusParam.split(',') as ProjectStatus[]
         }
-      } else if (status === 'FINISHED') {
-        // Finished projects are ARCHIVED
-        whereClause.status = ProjectStatus.ARCHIVED
-      } else if (Object.values(ProjectStatus).includes(status as ProjectStatus)) {
-        whereClause.status = status as ProjectStatus
+      } else {
+        // Single status
+        where.status = statusParam as ProjectStatus
+      }
+    } else if (!includeFinished) {
+      // Default: exclude finished projects unless explicitly requested
+      where.status = {
+        in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE, ProjectStatus.APPROVED]
       }
     }
 
-    const projects = await db.project.findMany({
-      where: whereClause,
+    const projects = await prisma.project.findMany({
+      where,
       include: {
-        user: true,
-        statusHistory: {
-          include: {
-            user: true
-          },
-          orderBy: {
-            changedAt: 'desc'
-          },
-          take: 5 // Limit history for performance
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
         }
       },
-      orderBy: {
-        updatedAt: 'desc'
-      }
+      orderBy: [
+        { updatedAt: 'desc' }
+      ]
     })
 
     return NextResponse.json(projects)
   } catch (error) {
     console.error('Error fetching projects:', error)
     return NextResponse.json(
-      { error: 'Failed to fetch projects' },
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }
@@ -60,40 +68,54 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
-    const { name, description, userId } = body
+    const session = await getServerSession(authOptions)
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-    if (!name || !userId) {
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email }
+    })
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
+
+    const body = await request.json()
+    const { name, description } = body
+
+    if (!name?.trim()) {
       return NextResponse.json(
-        { error: 'Name and userId are required' },
+        { error: 'Project name is required' },
         { status: 400 }
       )
     }
 
-    const project = await db.project.create({
+    const project = await prisma.project.create({
       data: {
-        name,
-        description,
-        userId,
-        status: ProjectStatus.IN_PROGRESS
+        name: name.trim(),
+        description: description?.trim() || null,
+        status: ProjectStatus.IN_PROGRESS,
+        userId: user.id
       },
       include: {
-        user: true,
-        statusHistory: {
-          include: {
-            user: true
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true
           }
         }
       }
     })
 
     // Create initial status history entry
-    await db.projectStatusHistory.create({
+    await prisma.projectStatusHistory.create({
       data: {
         projectId: project.id,
         oldStatus: null,
         newStatus: ProjectStatus.IN_PROGRESS,
-        changedBy: userId
+        changedBy: user.id
       }
     })
 
@@ -101,7 +123,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error creating project:', error)
     return NextResponse.json(
-      { error: 'Failed to create project' },
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }

@@ -1,36 +1,57 @@
-import { Project, ProjectStatus, ProjectStatusHistory, User } from '@prisma/client'
-
-export type { ProjectStatus } from '@prisma/client'
-
-export interface ProjectWithUser extends Project {
-  user: User
+export enum ProjectStatus {
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETE = 'COMPLETE',
+  APPROVED = 'APPROVED',
+  FINISHED = 'FINISHED'
 }
 
-export interface ProjectWithHistory extends Project {
-  user: User
-  statusHistory: (ProjectStatusHistory & { user: User })[]
+export interface Project {
+  id: string
+  name: string
+  description: string | null
+  status: ProjectStatus
+  createdAt: Date
+  updatedAt: Date
+  archivedAt: Date | null
+  userId: string
+  user?: {
+    id: string
+    name: string | null
+    email: string
+  }
+  statusHistory?: ProjectStatusHistory[]
 }
 
-export interface ProjectStatusChangeRequest {
+export interface ProjectStatusHistory {
+  id: string
   projectId: string
+  oldStatus: ProjectStatus | null
   newStatus: ProjectStatus
+  changedAt: Date
+  changedBy: string
+  user?: {
+    id: string
+    name: string | null
+    email: string
+  }
 }
 
-export interface ProjectFilters {
-  status?: ProjectStatus | 'ACTIVE' | 'ALL'
+export interface ProjectFilter {
+  status?: ProjectStatus | ProjectStatus[]
   userId?: string
+  includeFinished?: boolean
 }
 
-export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
-  IN_PROGRESS: 'In Progress',
-  COMPLETE: 'Complete',
-  APPROVED: 'Approved',
-  ARCHIVED: 'Archived'
-}
+export const PROJECT_STATUS_LABELS = {
+  [ProjectStatus.IN_PROGRESS]: 'In Progress',
+  [ProjectStatus.COMPLETE]: 'Complete',
+  [ProjectStatus.APPROVED]: 'Approved',
+  [ProjectStatus.FINISHED]: 'Finished'
+} as const
 
-export const PROJECT_STATUS_COLORS: Record<ProjectStatus, string> = {
-  IN_PROGRESS: 'bg-blue-100 text-blue-800',
-  COMPLETE: 'bg-yellow-100 text-yellow-800',
-  APPROVED: 'bg-green-100 text-green-800',
-  ARCHIVED: 'bg-gray-100 text-gray-800'
-}
+export const PROJECT_STATUS_COLORS = {
+  [ProjectStatus.IN_PROGRESS]: 'bg-blue-100 text-blue-800 border-blue-200',
+  [ProjectStatus.COMPLETE]: 'bg-green-100 text-green-800 border-green-200',
+  [ProjectStatus.APPROVED]: 'bg-purple-100 text-purple-800 border-purple-200',
+  [ProjectStatus.FINISHED]: 'bg-gray-100 text-gray-800 border-gray-200'
+} as const

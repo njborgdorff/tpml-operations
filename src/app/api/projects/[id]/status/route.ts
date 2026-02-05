@@ -1,33 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { ProjectStatus } from '@prisma/client'
+import { getServerSession } from 'next-auth'
+import { prisma } from '@/lib/prisma'
+import { ProjectStatus } from '@/types/project'
+import { authOptions } from '@/lib/auth'
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const { id } = params
-    const body = await request.json()
-    const { newStatus, changedBy } = body
-
-    if (!newStatus || !changedBy) {
-      return NextResponse.json(
-        { error: 'newStatus and changedBy are required' },
-        { status: 400 }
-      )
+    const session = await getServerSession(authOptions)
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    if (!Object.values(ProjectStatus).includes(newStatus)) {
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email }
+    })
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
+
+    const projectId = params.id
+    const body = await request.json()
+    const { status } = body
+
+    // Validate status
+    if (!Object.values(ProjectStatus).includes(status)) {
       return NextResponse.json(
         { error: 'Invalid status value' },
         { status: 400 }
       )
     }
 
-    // Get current project to check existing status
-    const currentProject = await db.project.findUnique({
-      where: { id }
+    // Get current project
+    const currentProject = await prisma.project.findUnique({
+      where: { id: projectId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      }
     })
 
     if (!currentProject) {
@@ -37,47 +55,44 @@ export async function PATCH(
       )
     }
 
-    // Use transaction to ensure data consistency
-    const result = await db.$transaction(async (tx) => {
-      // Update project status
-      const updatedProject = await tx.project.update({
-        where: { id },
-        data: {
-          status: newStatus,
-          archivedAt: newStatus === ProjectStatus.ARCHIVED ? new Date() : null
-        },
-        include: {
-          user: true,
-          statusHistory: {
-            include: {
-              user: true
-            },
-            orderBy: {
-              changedAt: 'desc'
-            },
-            take: 5
+    // Check if status is actually changing
+    if (currentProject.status === status) {
+      return NextResponse.json(currentProject)
+    }
+
+    // Update project status
+    const updatedProject = await prisma.project.update({
+      where: { id: projectId },
+      data: {
+        status,
+        archivedAt: status === ProjectStatus.FINISHED ? new Date() : null
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true
           }
         }
-      })
-
-      // Create status history entry
-      await tx.projectStatusHistory.create({
-        data: {
-          projectId: id,
-          oldStatus: currentProject.status,
-          newStatus: newStatus,
-          changedBy: changedBy
-        }
-      })
-
-      return updatedProject
+      }
     })
 
-    return NextResponse.json(result)
+    // Create status history entry
+    await prisma.projectStatusHistory.create({
+      data: {
+        projectId: projectId,
+        oldStatus: currentProject.status,
+        newStatus: status,
+        changedBy: user.id
+      }
+    })
+
+    return NextResponse.json(updatedProject)
   } catch (error) {
     console.error('Error updating project status:', error)
     return NextResponse.json(
-      { error: 'Failed to update project status' },
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }

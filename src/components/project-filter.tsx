@@ -1,5 +1,7 @@
 "use client"
 
+import { useState } from "react"
+import { ProjectStatus, PROJECT_STATUS_LABELS } from "@/types/project"
 import {
   Select,
   SelectContent,
@@ -8,38 +10,40 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 
+export type FilterOption = 'all' | 'active' | 'finished' | ProjectStatus
+
 interface ProjectFilterProps {
-  currentFilter: string
-  onFilterChange: (filter: string) => void
+  value: FilterOption
+  onValueChange: (filter: FilterOption) => void
+  className?: string
 }
 
-export function ProjectFilter({ currentFilter, onFilterChange }: ProjectFilterProps) {
+export function ProjectFilter({ 
+  value, 
+  onValueChange, 
+  className 
+}: ProjectFilterProps) {
   const filterOptions = [
-    { value: "ALL", label: "All Projects" },
-    { value: "ACTIVE", label: "Active Projects" },
-    { value: "IN_PROGRESS", label: "In Progress" },
-    { value: "COMPLETE", label: "Complete" },
-    { value: "APPROVED", label: "Approved" },
-    { value: "FINISHED", label: "Finished (Archived)" },
+    { value: 'all' as const, label: 'All Projects' },
+    { value: 'active' as const, label: 'Active Projects' },
+    { value: 'finished' as const, label: 'Finished Projects' },
+    { value: ProjectStatus.IN_PROGRESS, label: PROJECT_STATUS_LABELS[ProjectStatus.IN_PROGRESS] },
+    { value: ProjectStatus.COMPLETE, label: PROJECT_STATUS_LABELS[ProjectStatus.COMPLETE] },
+    { value: ProjectStatus.APPROVED, label: PROJECT_STATUS_LABELS[ProjectStatus.APPROVED] },
   ]
 
   return (
-    <div className="flex items-center gap-2">
-      <label htmlFor="project-filter" className="text-sm font-medium">
-        Filter:
-      </label>
-      <Select value={currentFilter} onValueChange={onFilterChange}>
-        <SelectTrigger className="w-48" id="project-filter">
-          <SelectValue placeholder="Select filter" />
-        </SelectTrigger>
-        <SelectContent>
-          {filterOptions.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger className={className}>
+        <SelectValue placeholder="Filter projects..." />
+      </SelectTrigger>
+      <SelectContent>
+        {filterOptions.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
