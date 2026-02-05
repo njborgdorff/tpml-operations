@@ -68,13 +68,18 @@ model Project {
   name           String
   slug           String        @unique
   status         ProjectStatus @default(INTAKE)
+  projectType    ProjectType   @default(NEW_PROJECT)
 
   // Intake data (business questions)
   intakeData     Json
 
   // Target codebase (for bug fixes/enhancements to existing projects)
   // If set, implementation runs in this folder instead of creating a new one
+  // Required for NEW_FEATURE and BUG_FIX types
   targetCodebase String?
+
+  // For BUG_FIX: brief description of the issue (simpler than full intake)
+  bugDescription String?       @db.Text
 
   // AI-generated artifacts
   pmPlan         Json?
@@ -120,6 +125,12 @@ enum ApprovalStatus {
   APPROVED
   REVISION_REQUESTED
   REJECTED
+}
+
+enum ProjectType {
+  NEW_PROJECT    // Brand new application, needs new repo
+  NEW_FEATURE    // Adding feature to existing codebase, feature branch + PR
+  BUG_FIX        // Simple fix, minimal workflow, quick branch + PR
 }
 
 // ============================================

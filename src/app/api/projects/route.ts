@@ -2,13 +2,26 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
-import { IntakeSchema, IntakeData } from '@/types';
+import { IntakeSchema, IntakeData, NewProjectData, NewFeatureData, BugFixData } from '@/types';
 import { syncKnowledgeBase } from '@/lib/knowledge/sync';
 import fs from 'fs/promises';
 import path from 'path';
 
 const PROJECTS_ROOT = 'C:/tpml-ai-team/projects';
 const TEMPLATES_ROOT = 'C:/tpml-ai-team/tpml-core/templates/project-setup';
+
+// Type guards for discriminated union
+function isNewProject(data: IntakeData): data is NewProjectData {
+  return data.projectType === 'NEW_PROJECT';
+}
+
+function isNewFeature(data: IntakeData): data is NewFeatureData {
+  return data.projectType === 'NEW_FEATURE';
+}
+
+function isBugFix(data: IntakeData): data is BugFixData {
+  return data.projectType === 'BUG_FIX';
+}
 
 function slugify(text: string): string {
   return text
@@ -19,8 +32,9 @@ function slugify(text: string): string {
 
 /**
  * Create the project folder structure with template files
+ * Only used for NEW_PROJECT type - features/bug fixes use existing codebases
  */
-async function createProjectFolder(slug: string, projectName: string, clientName: string, intakeData: IntakeData): Promise<void> {
+async function createProjectFolder(slug: string, projectName: string, clientName: string, intakeData: NewProjectData): Promise<void> {
   const projectPath = path.join(PROJECTS_ROOT, slug);
   const docsPath = path.join(projectPath, 'docs');
 
@@ -145,31 +159,40 @@ export async function POST(request: Request) {
       counter++;
     }
 
+    // Build project data based on project type
+    // Note: projectType and bugDescription fields require `prisma generate` after migration
+    const projectData = {
+      name: data.name,
+      slug,
+      intakeData: data,
+      clientId: client.id,
+      ownerId: session.user.id,
+      status: 'INTAKE' as const,
+      projectType: data.projectType,
+      targetCodebase: data.targetCodebase || null,
+      bugDescription: isBugFix(data) ? data.bugDescription : null,
+    };
+
     const project = await prisma.project.create({
-      data: {
-        name: data.name,
-        slug,
-        intakeData: data,
-        clientId: client.id,
-        ownerId: session.user.id,
-        status: 'INTAKE',
-        // Store target codebase if this is a bug fix / enhancement
-        targetCodebase: data.targetCodebase || null,
-      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      data: projectData as any, // Type includes new schema fields that require prisma generate
       include: { client: true },
     });
 
-    // Only create project folder structure for NEW projects (not bug fixes/enhancements)
-    if (!data.targetCodebase) {
+    console.log(`[Projects] Created ${data.projectType}: ${project.name} (${slug})`);
+
+    // Only create project folder structure for NEW_PROJECT type
+    // NEW_FEATURE and BUG_FIX use existing codebases
+    if (isNewProject(data) && !data.targetCodebase) {
       try {
         await createProjectFolder(slug, data.name, client.name, data);
-        console.log(`[Projects] Created folder for project: ${slug}`);
+        console.log(`[Projects] Created folder for new project: ${slug}`);
       } catch (folderError) {
         console.error(`[Projects] Failed to create folder for ${slug}:`, folderError);
         // Don't fail the request - folder creation is secondary
       }
-    } else {
-      console.log(`[Projects] Using existing codebase: ${data.targetCodebase} (no new folder created)`);
+    } else if (data.targetCodebase) {
+      console.log(`[Projects] Using existing codebase: ${data.targetCodebase}`);
     }
 
     // Sync knowledge base (fire and forget)
