@@ -99,15 +99,15 @@ export default function HomePage() {
               <div>
                 <h3 className="font-medium mb-1">✓ P1 Features:</h3>
                 <ul className="space-y-1 text-xs">
-                  <li>• Basic project filtering</li>
+                  <li>• Basic project filtering by status</li>
                   <li>• Active vs Finished project views</li>
-                  <li>• Status change history</li>
+                  <li>• Filter state persistence</li>
                 </ul>
               </div>
             </div>
           </div>
         </div>
-
+        
         <ProjectDashboard 
           onCreateProject={() => setCreateDialogOpen(true)}
         />

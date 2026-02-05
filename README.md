@@ -134,10 +134,36 @@ IN_PROGRESS → COMPLETE → APPROVED → FINISHED
 
 ## API Endpoints
 
-- `GET /api/projects` - Fetch projects with filtering
+### Projects
+- `GET /api/projects` - List projects with filtering
+  - Query params: `status`, `filter` (active/finished)
 - `POST /api/projects` - Create new project
 - `PATCH /api/projects/[id]/status` - Update project status
 - `GET /api/projects/[id]/history` - Get status change history
+
+### Authentication
+- `POST /api/auth/signin` - Sign in (NextAuth)
+- `POST /api/auth/signout` - Sign out
+- `GET /api/auth/session` - Get current session
+
+### Health Check
+- `GET /api/health` - System health and feature status
+
+## Project Structure
+
+```
+src/
+├── app/                    # Next.js app router
+│   ├── api/               # API routes
+│   ├── auth/              # Authentication pages
+│   └── globals.css        # Global styles
+├── components/            # React components
+│   ├── ui/               # Reusable UI components
+│   └── providers/        # Context providers
+├── hooks/                # Custom React hooks
+├── lib/                  # Utility functions
+└── types/                # TypeScript type definitions
+```
 
 ## Development Commands
 
@@ -145,53 +171,112 @@ IN_PROGRESS → COMPLETE → APPROVED → FINISHED
 # Development server
 npm run dev
 
-# Database operations
-npm run db:generate    # Generate Prisma client
-npm run db:migrate     # Run migrations
-npm run db:push        # Push schema changes
-npm run db:studio      # Open Prisma Studio
-
-# Build and production
+# Build for production
 npm run build
-npm run start
+
+# Database commands
+npm run db:push          # Push schema changes
+npm run db:migrate       # Run migrations
+npm run db:generate      # Generate Prisma client
+npm run db:studio        # Open Prisma Studio
+
+# Linting
+npm run lint
 ```
 
-## Project Structure
+## Environment Variables
 
-```
-src/
-├── app/
-│   ├── api/           # API routes
-│   ├── auth/          # Authentication pages
-│   ├── globals.css    # Global styles
-│   ├── layout.tsx     # Root layout
-│   └── page.tsx       # Homepage
-├── components/
-│   ├── ui/            # Reusable UI components
-│   ├── providers/     # Context providers
-│   └── *.tsx          # Feature components
-├── hooks/             # Custom React hooks
-├── lib/               # Utilities and configurations
-└── types/             # TypeScript type definitions
+Required environment variables in `.env.local`:
+
+```env
+# Database
+DATABASE_URL="postgresql://user:pass@localhost:5432/tpml_db"
+
+# NextAuth.js
+NEXTAUTH_URL="http://localhost:3000"
+NEXTAUTH_SECRET="your-secret-key-here"
 ```
 
-## Sprint 1 Deliverables Status
+## Production Deployment
 
-| Feature | Status | Description |
-|---------|--------|-------------|
-| S1-1 | ✅ Complete | Project status tracking with full workflow |
-| S1-2 | ✅ Complete | Dashboard UI with status display and controls |
-| S1-3 | ✅ Complete | Basic project filtering with Active/Finished views |
+### Vercel (Recommended)
+1. Connect your GitHub repository to Vercel
+2. Set environment variables in Vercel dashboard
+3. Deploy automatically on push to main branch
 
-## Next Steps (Future Sprints)
+### Manual Deployment
+```bash
+# Build the application
+npm run build
 
-- Advanced filtering and search functionality
-- Project details and editing capabilities
-- User role management and permissions
-- Bulk operations and multi-select
-- Reporting and analytics dashboard
-- Real-time collaboration features
+# Start production server
+npm start
+```
+
+### Production Considerations
+- Replace credentials provider with OAuth providers (Google, GitHub)
+- Use secure database connection strings
+- Set strong NEXTAUTH_SECRET
+- Enable HTTPS in production
+- Configure proper CORS settings
+
+## Testing
+
+### Manual Testing Checklist
+
+#### P0 Features
+- [ ] Create project (starts as IN_PROGRESS)
+- [ ] Update project status through UI
+- [ ] Verify status changes persist
+- [ ] Check status badges display correctly
+- [ ] Test responsive design on mobile
+
+#### P1 Features
+- [ ] Filter projects by specific status
+- [ ] Filter by Active/Finished project types
+- [ ] Clear filters functionality
+- [ ] Filter state persists during session
+
+### API Testing
+Use the health endpoint to verify all features:
+```bash
+curl http://localhost:3000/api/health
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Database connection errors**
+   - Verify PostgreSQL is running
+   - Check DATABASE_URL format
+   - Run `npm run db:push` to sync schema
+
+2. **Authentication issues**
+   - Check NEXTAUTH_SECRET is set
+   - Clear browser cookies/localStorage
+   - Verify NEXTAUTH_URL matches your domain
+
+3. **Build errors**
+   - Run `npm run db:generate` after schema changes
+   - Clear Next.js cache: `rm -rf .next`
+   - Check TypeScript errors: `npx tsc --noEmit`
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if needed
+5. Submit a pull request
 
 ## License
 
-This project is private and proprietary to TPML.
+This project is licensed under the MIT License.
+
+## Support
+
+For issues and questions:
+1. Check the troubleshooting section
+2. Review the SPRINT1_VERIFICATION.md guide
+3. Open an issue on GitHub

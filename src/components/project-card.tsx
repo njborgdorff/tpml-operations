@@ -108,47 +108,18 @@ export function ProjectCard({ project }: ProjectCardProps) {
                 </DropdownMenuItem>
               )}
               
-              {canMoveToFinished(project.status) && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem 
-                    onClick={() => handleStatusUpdate(ProjectStatus.FINISHED)}
-                    disabled={updateStatusMutation.isPending}
-                    className="text-orange-700 focus:text-orange-700 focus:bg-orange-50"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Archive className="h-4 w-4" />
-                      Move to Finished
-                    </div>
-                  </DropdownMenuItem>
-                </>
-              )}
+              {(previousStatus || nextStatus) && <DropdownMenuSeparator />}
               
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-xs">Project Info</DropdownMenuLabel>
               <DropdownMenuItem disabled>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 text-muted-foreground">
                   <History className="h-4 w-4" />
-                  Status History Available
+                  View History
                 </div>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
-      
-      {/* Status transition hint */}
-      {project.status !== ProjectStatus.FINISHED && (
-        <div className="mt-3 text-xs text-muted-foreground bg-gray-50 rounded px-2 py-1">
-          <span className="font-medium">Next:</span> {nextStatus ? getStatusLabel(nextStatus) : 'Complete'}
-        </div>
-      )}
-      
-      {updateStatusMutation.isPending && (
-        <div className="mt-2 text-xs text-blue-600 bg-blue-50 rounded px-2 py-1">
-          Updating status...
-        </div>
-      )}
     </div>
   );
 }
