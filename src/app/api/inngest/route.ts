@@ -2252,25 +2252,27 @@ Keep your response focused on architecture validation. Be concise but thorough.`
           return validateGeneratedCode(implementationResult.operations);
         });
 
-        // Post validation results
+        // Log validation details (keep Slack messages brief)
         if (!validationResult.valid || validationResult.warnings.length > 0) {
-          await step.run(`post-validation-result${iterSuffix}`, async () => {
-            const errorList = validationResult.errors.length > 0
-              ? `\n\n*Errors:*\n${validationResult.errors.map(e => `• ${e}`).join('\n')}`
-              : '';
-            const warningList = validationResult.warnings.length > 0
-              ? `\n\n*Warnings:*\n${validationResult.warnings.map(w => `• ${w}`).join('\n')}`
-              : '';
+          // Log full details to console for debugging
+          console.log(`[Validation] Result for iteration ${iteration}:`, {
+            valid: validationResult.valid,
+            errorCount: validationResult.errors.length,
+            warningCount: validationResult.warnings.length,
+            errors: validationResult.errors,
+            warnings: validationResult.warnings,
+          });
 
-            return postAsRole('Implementer', channel, 'Code validation results', [
+          // Post brief summary to Slack (no details)
+          await step.run(`post-validation-result${iterSuffix}`, async () => {
+            const message = validationResult.valid
+              ? `⚠️ *Code Validation: Passed* (${validationResult.warnings.length} warnings)`
+              : `❌ *Code Validation: Failed* (${validationResult.errors.length} errors). Retrying...`;
+
+            return postAsRole('Implementer', channel, 'Code validation', [
               {
                 type: 'section',
-                text: {
-                  type: 'mrkdwn',
-                  text: validationResult.valid
-                    ? `⚠️ *Code Validation: Passed with Warnings*${warningList}`
-                    : `❌ *Code Validation: Failed*\n\nBuild errors detected. Code will not be committed until fixed.${errorList}${warningList}`,
-                },
+                text: { type: 'mrkdwn', text: message },
               },
             ], kickoffMessage?.ts);
           });
@@ -2680,14 +2682,18 @@ DO NOT start a new implementation. EDIT the existing files to fix the issues.`;
           });
 
           if (!fixValidation.valid) {
+            // Log full details to console
+            console.log(`[Validation] Fix validation failed for iteration ${iteration}:`, {
+              errorCount: fixValidation.errors.length,
+              errors: fixValidation.errors,
+            });
+
+            // Brief Slack message
             await step.run(`post-fix-validation-failed${iterSuffix}`, async () => {
               return postAsRole('Implementer', channel, 'Fix validation failed', [
                 {
                   type: 'section',
-                  text: {
-                    type: 'mrkdwn',
-                    text: `❌ *Fix Validation Failed*\n\nThe fixes have build errors:\n${fixValidation.errors.map(e => `• ${e}`).join('\n')}\n\nWill retry in next iteration.`,
-                  },
+                  text: { type: 'mrkdwn', text: `❌ *Fix Validation Failed* (${fixValidation.errors.length} errors). Retrying...` },
                 },
               ], kickoffMessage?.ts);
             });
@@ -3070,14 +3076,18 @@ DO NOT start a new implementation. EDIT the existing files to fix the bugs.`;
           });
 
           if (!bugfixValidation.valid) {
+            // Log full details to console
+            console.log(`[Validation] Bugfix validation failed for iteration ${iteration}:`, {
+              errorCount: bugfixValidation.errors.length,
+              errors: bugfixValidation.errors,
+            });
+
+            // Brief Slack message
             await step.run(`post-bugfix-validation-failed${iterSuffix}`, async () => {
               return postAsRole('Implementer', channel, 'Bugfix validation failed', [
                 {
                   type: 'section',
-                  text: {
-                    type: 'mrkdwn',
-                    text: `❌ *Bugfix Validation Failed*\n\nThe bugfixes have build errors:\n${bugfixValidation.errors.map(e => `• ${e}`).join('\n')}\n\nWill retry in next iteration.`,
-                  },
+                  text: { type: 'mrkdwn', text: `❌ *Bugfix Validation Failed* (${bugfixValidation.errors.length} errors). Retrying...` },
                 },
               ], kickoffMessage?.ts);
             });
