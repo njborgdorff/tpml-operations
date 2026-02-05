@@ -2146,6 +2146,7 @@ Keep your response focused on architecture validation. Be concise but thorough.`
     let iteration = 0;
     let workflowComplete = false;
     let allFilesModified: string[] = []; // Track all files across iterations
+    const allOperations: FileOperation[] = []; // Track all file operations with content across iterations
 
     while (!workflowComplete && iteration < MAX_ITERATIONS) {
       iteration++;
@@ -2175,13 +2176,18 @@ Keep your response focused on architecture validation. Be concise but thorough.`
       const implementationResult = await step.run(`generate-implementation${iterSuffix}`, async () => {
         const previousFeedback = iteration > 1 ? currentImplementation : undefined;
 
+        // Convert previous operations to existing files format for context
+        const existingFiles = allOperations.length > 0
+          ? allOperations.map(op => ({ path: op.path, content: op.content || '' }))
+          : undefined;
+
         // Use tool_use based implementation that generates actual file operations
         const result = await runImplementation(
           projectName,
           sprintNumber,
           sprintName || `Sprint ${sprintNumber}`,
           handoffContent || 'No handoff document provided',
-          undefined, // existing files - could be fetched from GitHub
+          existingFiles,
           previousFeedback
         );
 
@@ -2197,12 +2203,41 @@ Keep your response focused on architecture validation. Be concise but thorough.`
         };
       });
 
+      // Track all operations across iterations (update existing files, add new ones)
+      if (implementationResult.operations && implementationResult.operations.length > 0) {
+        for (const op of implementationResult.operations) {
+          const existingIndex = allOperations.findIndex(o => o.path === op.path);
+          if (existingIndex >= 0) {
+            allOperations[existingIndex] = op; // Update existing file
+          } else {
+            allOperations.push(op); // Add new file
+          }
+        }
+      }
+
       // If we have file operations, commit them to GitHub
       const githubRepo = process.env.GITHUB_REPO; // e.g., "owner/repo"
-      const targetRepo = (await prisma.project.findUnique({
+      const githubOwner = githubRepo?.split('/')[0]; // Extract owner from GITHUB_REPO
+
+      // Get project's target codebase
+      const projectTarget = (await prisma.project.findUnique({
         where: { id: projectId },
         select: { targetCodebase: true }
-      }))?.targetCodebase || githubRepo;
+      }))?.targetCodebase;
+
+      // Determine the target repo:
+      // - If targetCodebase contains '/', use it directly (it's already owner/repo format)
+      // - If targetCodebase is just a repo name, prefix with the owner from GITHUB_REPO
+      // - Otherwise fall back to GITHUB_REPO
+      let targetRepo: string | undefined;
+      if (projectTarget) {
+        if (projectTarget.includes('/')) {
+          targetRepo = projectTarget; // Already in owner/repo format
+        } else if (githubOwner) {
+          targetRepo = `${githubOwner}/${projectTarget}`; // Prefix with owner
+        }
+      }
+      targetRepo = targetRepo || githubRepo;
 
       let commitResult: { success: boolean; commitSha?: string; error?: string } = { success: false };
 
@@ -2492,24 +2527,33 @@ Make a CLEAR DECISION: Either APPROVE to proceed to QA, or REQUEST CHANGES with 
         });
 
         // Implementer addresses the feedback using tool_use to generate actual code
-        const reviewerFeedback = `## Reviewer Feedback - MUST FIX THESE ISSUES
+        const reviewerFeedback = `## CRITICAL: FIX EXISTING CODE - DO NOT START OVER
+
+The reviewer found issues with your EXISTING implementation. You MUST:
+1. Read the existing files provided below - this is YOUR previous code
+2. FIX the specific issues mentioned - do NOT recreate from scratch
+3. Use edit_file to modify existing files, create_file only for genuinely new files
+
+## Reviewer Feedback
 ${reviewerResponse.response}
 
 ## Specific Issues to Address
 ${reviewDecision.issues || 'See reviewer feedback above'}
 
-IMPORTANT: The reviewer found issues with the previous implementation. You MUST:
-1. Read the feedback carefully
-2. Use create_file and edit_file tools to fix the actual code
-3. Do NOT just describe what you would do - actually fix the code`;
+DO NOT start a new implementation. EDIT the existing files to fix the issues.`;
 
         const fixResult = await step.run(`implementer-fix${iterSuffix}`, async () => {
+          // Pass existing files so Claude can fix them rather than starting over
+          const existingFiles = allOperations.length > 0
+            ? allOperations.map(op => ({ path: op.path, content: op.content || '' }))
+            : undefined;
+
           const result = await runImplementation(
             projectName,
             sprintNumber,
             sprintName || `Sprint ${sprintNumber}`,
             handoffContent || 'No handoff document provided',
-            undefined, // existing files
+            existingFiles,
             reviewerFeedback
           );
 
@@ -2522,6 +2566,18 @@ IMPORTANT: The reviewer found issues with the previous implementation. You MUST:
             error: result.error,
           };
         });
+
+        // Update tracked operations with fixes
+        if (fixResult.operations && fixResult.operations.length > 0) {
+          for (const op of fixResult.operations) {
+            const existingIndex = allOperations.findIndex(o => o.path === op.path);
+            if (existingIndex >= 0) {
+              allOperations[existingIndex] = op;
+            } else {
+              allOperations.push(op);
+            }
+          }
+        }
 
         // Commit fix to GitHub if we have operations
         if (fixResult.operations && fixResult.operations.length > 0 && targetRepo) {
@@ -2567,7 +2623,7 @@ ${fixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`).jo
             }
           });
 
-          allFilesModified = [...new Set([...allFilesModified, ...fixResult.filesModified])];
+          allFilesModified = Array.from(new Set([...allFilesModified, ...fixResult.filesModified]));
         }
 
         await step.run(`post-implementer-fix${iterSuffix}`, async () => {
@@ -2794,24 +2850,33 @@ Make a CLEAR DECISION: Either PASS the tests, or document BUGS FOUND with specif
         });
 
         // Implementer fixes the bugs using tool_use to generate actual code
-        const qaBugFeedback = `## QA Bug Report - MUST FIX THESE BUGS
+        const qaBugFeedback = `## CRITICAL: FIX BUGS IN EXISTING CODE - DO NOT START OVER
+
+QA found bugs in your EXISTING implementation. You MUST:
+1. Read the existing files provided below - this is YOUR previous code
+2. FIX the specific bugs mentioned - do NOT recreate from scratch
+3. Use edit_file to modify existing files, create_file only for genuinely new files
+
+## QA Bug Report
 ${qaResponse.response}
 
 ## Specific Bugs to Fix
 ${qaDecision.issues || 'See QA report above'}
 
-IMPORTANT: QA found bugs in the implementation. You MUST:
-1. Read the bug report carefully
-2. Use create_file and edit_file tools to fix the actual code
-3. Do NOT just describe what you would do - actually fix the bugs in the code`;
+DO NOT start a new implementation. EDIT the existing files to fix the bugs.`;
 
         const bugfixResult = await step.run(`implementer-bugfix${iterSuffix}`, async () => {
+          // Pass existing files so Claude can fix them rather than starting over
+          const existingFiles = allOperations.length > 0
+            ? allOperations.map(op => ({ path: op.path, content: op.content || '' }))
+            : undefined;
+
           const result = await runImplementation(
             projectName,
             sprintNumber,
             sprintName || `Sprint ${sprintNumber}`,
             handoffContent || 'No handoff document provided',
-            undefined, // existing files
+            existingFiles,
             qaBugFeedback
           );
 
@@ -2824,6 +2889,18 @@ IMPORTANT: QA found bugs in the implementation. You MUST:
             error: result.error,
           };
         });
+
+        // Update tracked operations with bugfixes
+        if (bugfixResult.operations && bugfixResult.operations.length > 0) {
+          for (const op of bugfixResult.operations) {
+            const existingIndex = allOperations.findIndex(o => o.path === op.path);
+            if (existingIndex >= 0) {
+              allOperations[existingIndex] = op;
+            } else {
+              allOperations.push(op);
+            }
+          }
+        }
 
         // Commit bugfix to GitHub if we have operations
         if (bugfixResult.operations && bugfixResult.operations.length > 0 && targetRepo) {
@@ -2869,7 +2946,7 @@ ${bugfixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`)
             }
           });
 
-          allFilesModified = [...new Set([...allFilesModified, ...bugfixResult.filesModified])];
+          allFilesModified = Array.from(new Set([...allFilesModified, ...bugfixResult.filesModified]));
         }
 
         await step.run(`post-implementer-bugfix${iterSuffix}`, async () => {
