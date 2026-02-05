@@ -1871,8 +1871,8 @@ const handleProjectKickoff = inngest.createFunction(
       reinitiated,
       projectPath,
       projectType = 'NEW_PROJECT', // Default for backwards compatibility
-      bugDescription,
-      featureDescription,
+      bugDescription: _bugDescription,
+      featureDescription: _featureDescription,
       targetCodebase,
     } = event.data;
 

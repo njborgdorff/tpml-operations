@@ -15,7 +15,7 @@ function isNewProject(data: IntakeData): data is NewProjectData {
   return data.projectType === 'NEW_PROJECT';
 }
 
-function isNewFeature(data: IntakeData): data is NewFeatureData {
+function _isNewFeature(data: IntakeData): data is NewFeatureData {
   return data.projectType === 'NEW_FEATURE';
 }
 
