@@ -1,10 +1,11 @@
-"use client"
+'use client';
 
-import { useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
+import { useState } from 'react';
+import { useCreateProject } from '@/hooks/useProjects';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
@@ -12,130 +13,92 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2 } from "lucide-react"
+} from '@/components/ui/dialog';
 
 interface CreateProjectDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onProjectCreated: () => void
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
-export function CreateProjectDialog({
-  open,
-  onOpenChange,
-  onProjectCreated
-}: CreateProjectDialogProps) {
-  const [name, setName] = useState("")
-  const [description, setDescription] = useState("")
-  const [error, setError] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
+export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogProps) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const createProjectMutation = useCreateProject();
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsLoading(true)
-    setError("")
-
-    if (!name.trim()) {
-      setError("Project name is required")
-      setIsLoading(false)
-      return
-    }
+    e.preventDefault();
+    
+    if (!name.trim()) return;
 
     try {
-      const response = await fetch("/api/projects", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: name.trim(),
-          description: description.trim() || null,
-        }),
-      })
-
-      if (response.ok) {
-        setName("")
-        setDescription("")
-        onProjectCreated()
-      } else {
-        const data = await response.json()
-        setError(data.error || "Failed to create project")
-      }
+      await createProjectMutation.mutateAsync({
+        name: name.trim(),
+        description: description.trim() || undefined,
+      });
+      
+      // Reset form and close dialog
+      setName('');
+      setDescription('');
+      onOpenChange(false);
     } catch (error) {
-      setError("Something went wrong. Please try again.")
-    } finally {
-      setIsLoading(false)
+      console.error('Failed to create project:', error);
     }
-  }
+  };
 
-  const handleOpenChange = (newOpen: boolean) => {
-    if (!isLoading) {
-      if (!newOpen) {
-        setName("")
-        setDescription("")
-        setError("")
-      }
-      onOpenChange(newOpen)
-    }
-  }
+  const handleCancel = () => {
+    setName('');
+    setDescription('');
+    onOpenChange(false);
+  };
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle>Create New Project</DialogTitle>
           <DialogDescription>
-            Create a new project to organize your tasks and collaborate with your team.
+            Add a new project to track its progress from start to finish.
           </DialogDescription>
         </DialogHeader>
+        
         <form onSubmit={handleSubmit}>
-          <div className="space-y-4 py-4">
-            {error && (
-              <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-            <div className="space-y-2">
-              <Label htmlFor="project-name">Project Name *</Label>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="name">Project Name *</Label>
               <Input
-                id="project-name"
+                id="name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Enter project name"
-                disabled={isLoading}
                 required
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="project-description">Description</Label>
+            
+            <div className="grid gap-2">
+              <Label htmlFor="description">Description</Label>
               <Textarea
-                id="project-description"
+                id="description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Enter project description (optional)"
                 rows={3}
-                disabled={isLoading}
               />
             </div>
           </div>
+          
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => handleOpenChange(false)}
-              disabled={isLoading}
-            >
+            <Button type="button" variant="outline" onClick={handleCancel}>
               Cancel
             </Button>
-            <Button type="submit" disabled={isLoading}>
-              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Create Project
+            <Button 
+              type="submit" 
+              disabled={!name.trim() || createProjectMutation.isPending}
+            >
+              {createProjectMutation.isPending ? 'Creating...' : 'Create Project'}
             </Button>
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
-  )
+  );
 }
