@@ -107,15 +107,42 @@ export async function runImplementation(
   let testingNotes = '';
 
   // Build context about existing files
-  const existingFilesContext = existingFiles && existingFiles.length > 0
-    ? `\n\n## Existing Files You Can Reference/Modify\n${existingFiles.map(f => `### ${f.path}\n\`\`\`\n${f.content.substring(0, 2000)}${f.content.length > 2000 ? '\n... (truncated)' : ''}\n\`\`\``).join('\n\n')}`
+  const hasExistingCode = existingFiles && existingFiles.length > 0;
+  const hasFeedback = !!previousFeedback;
+
+  const existingFilesContext = hasExistingCode
+    ? `\n\n## YOUR EXISTING CODE (from previous implementation)\n\nThese files are YOUR previous implementation. You MUST modify these files to address any feedback.\n\n${existingFiles!.map(f => `### ${f.path}\n\`\`\`\n${f.content.substring(0, 4000)}${f.content.length > 4000 ? '\n... (truncated)' : ''}\n\`\`\``).join('\n\n')}`
     : '';
 
-  const feedbackContext = previousFeedback
-    ? `\n\n## Previous Feedback to Address\n${previousFeedback}`
+  const feedbackContext = hasFeedback
+    ? `\n\n## FEEDBACK TO ADDRESS\n${previousFeedback}`
     : '';
 
-  const systemPrompt = `You are the Implementer for TPML (Total Product Management, Ltd.), a senior developer who writes production-quality code.
+  // Different system prompt based on whether this is a fix iteration or initial implementation
+  const systemPrompt = hasExistingCode && hasFeedback
+    ? `You are the Implementer for TPML. You previously implemented code that received feedback.
+
+## CRITICAL INSTRUCTION
+You are NOT starting fresh. You have EXISTING CODE that needs FIXES based on feedback.
+- DO NOT recreate files from scratch
+- ONLY use edit_file to modify existing files
+- ONLY use create_file for genuinely NEW files that don't exist yet
+- Focus ONLY on addressing the specific feedback issues
+
+## Rules
+1. Read the existing code carefully - this is YOUR previous work
+2. Identify what specific changes are needed based on feedback
+3. Use edit_file to fix existing files
+4. Only use create_file for new files (like migration files, test files, etc.)
+5. Call implementation_complete when you've addressed ALL feedback issues
+
+## Project Context
+- Next.js 14 with TypeScript, Tailwind CSS, Prisma
+- Components use shadcn/ui conventions
+- API routes: src/app/api/
+- Components: src/components/
+- Database: prisma/schema.prisma`
+    : `You are the Implementer for TPML (Total Product Management, Ltd.), a senior developer who writes production-quality code.
 
 Your job is to ACTUALLY IMPLEMENT the features described in the handoff document by creating and editing files.
 
@@ -133,7 +160,22 @@ Your job is to ACTUALLY IMPLEMENT the features described in the handoff document
 - Components are in src/components/
 - Database schema is in prisma/schema.prisma`;
 
-  const userPrompt = `## Your Task
+  const userPrompt = hasExistingCode && hasFeedback
+    ? `## FIX TASK - Address Feedback for Sprint ${sprintNumber} (${sprintName})
+
+Your existing implementation received feedback. You must FIX the existing code, NOT start over.
+${existingFilesContext}
+${feedbackContext}
+
+## Instructions
+1. Read your existing code above
+2. Read the feedback carefully
+3. Use edit_file to fix ONLY what needs to be fixed
+4. Add any NEW files needed (like tests, migrations) with create_file
+5. Call implementation_complete with a summary of what you fixed
+
+DO NOT recreate all files. Only modify what needs to change.`
+    : `## Your Task
 Implement Sprint ${sprintNumber} (${sprintName}) for project "${projectName}".
 
 ## Handoff Document
