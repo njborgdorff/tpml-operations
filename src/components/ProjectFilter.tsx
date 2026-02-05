@@ -1,40 +1,33 @@
-'use client';
+"use client";
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { useState, useEffect } from "react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+type FilterType = "active" | "finished";
 
 interface ProjectFilterProps {
-  value: 'ALL' | 'ACTIVE' | 'FINISHED';
-  onValueChange: (value: 'ALL' | 'ACTIVE' | 'FINISHED') => void;
-  className?: string;
+  onFilterChange: (filter: FilterType) => void;
+  defaultFilter?: FilterType;
 }
 
-export function ProjectFilter({ value, onValueChange, className }: ProjectFilterProps) {
-  const filterOptions = [
-    { value: 'ALL', label: 'All Projects' },
-    { value: 'ACTIVE', label: 'Active Projects' },
-    { value: 'FINISHED', label: 'Finished Projects' }
-  ];
+export function ProjectFilter({ onFilterChange, defaultFilter = "active" }: ProjectFilterProps) {
+  const [activeFilter, setActiveFilter] = useState<FilterType>(defaultFilter);
+
+  useEffect(() => {
+    onFilterChange(activeFilter);
+  }, [activeFilter, onFilterChange]);
+
+  const handleFilterChange = (value: string) => {
+    const newFilter = value as FilterType;
+    setActiveFilter(newFilter);
+  };
 
   return (
-    <Select value={value} onValueChange={onValueChange}>
-      <SelectTrigger className={className}>
-        <SelectValue>
-          {filterOptions.find(option => option.value === value)?.label}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent>
-        {filterOptions.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <Tabs value={activeFilter} onValueChange={handleFilterChange} className="w-full">
+      <TabsList className="grid w-full grid-cols-2">
+        <TabsTrigger value="active">Active Projects</TabsTrigger>
+        <TabsTrigger value="finished">Finished Projects</TabsTrigger>
+      </TabsList>
+    </Tabs>
   );
 }

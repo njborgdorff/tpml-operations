@@ -1,103 +1,101 @@
-'use client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSession } from "next-auth/react";
+import { toast } from "sonner";
+import { ProjectWithUser, CreateProjectData, UpdateProjectStatusData, ProjectFilters } from "@/types/project";
 
-import { useState, useEffect } from 'react';
-import { Project, ProjectStatus } from '@/lib/types';
+const PROJECTS_QUERY_KEY = "projects";
 
-interface UseProjectsOptions {
-  filter?: 'ALL' | 'ACTIVE' | 'FINISHED';
-  userId?: string;
+async function fetchProjects(filters?: ProjectFilters): Promise<ProjectWithUser[]> {
+  const params = new URLSearchParams();
+  if (filters?.status) {
+    params.append("status", filters.status);
+  }
+  
+  const response = await fetch(`/api/projects?${params}`);
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to fetch projects");
+  }
+  
+  return response.json();
 }
 
-export function useProjects({ filter = 'ALL', userId }: UseProjectsOptions = {}) {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [statusChangeLoading, setStatusChangeLoading] = useState(false);
+async function createProject(data: CreateProjectData): Promise<ProjectWithUser> {
+  const response = await fetch("/api/projects", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to create project");
+  }
+  
+  return response.json();
+}
 
-  const fetchProjects = async () => {
-    try {
-      setLoading(true);
-      setError(null);
+async function updateProjectStatus(
+  projectId: string,
+  data: UpdateProjectStatusData
+): Promise<ProjectWithUser> {
+  const response = await fetch(`/api/projects/${projectId}/status`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to update project status");
+  }
+  
+  return response.json();
+}
 
-      const params = new URLSearchParams();
-      
-      if (filter !== 'ALL') {
-        params.append('status', filter);
-      }
-      
-      if (userId) {
-        params.append('userId', userId);
-      }
+export function useProjects(filters?: ProjectFilters) {
+  const { data: session } = useSession();
+  
+  return useQuery({
+    queryKey: [PROJECTS_QUERY_KEY, filters],
+    queryFn: () => fetchProjects(filters),
+    enabled: !!session?.user?.id,
+    staleTime: 30000, // 30 seconds
+  });
+}
 
-      const response = await fetch(`/api/projects?${params.toString()}`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch projects');
-      }
+export function useCreateProject() {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: createProject,
+    onSuccess: (newProject) => {
+      queryClient.invalidateQueries({ queryKey: [PROJECTS_QUERY_KEY] });
+      toast.success(`Project "${newProject.name}" created successfully`);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
+}
 
-      const data = await response.json();
-      setProjects(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const updateProjectStatus = async (projectId: string, newStatus: ProjectStatus) => {
-    try {
-      setStatusChangeLoading(true);
-      setError(null);
-
-      const response = await fetch(`/api/projects/${projectId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          status: newStatus,
-          changedBy: 'temp-user' // TODO: Replace with actual user ID from auth
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to update project status');
-      }
-
-      const updatedProject = await response.json();
-      
-      // Update the project in the local state
-      setProjects(prevProjects =>
-        prevProjects.map(project =>
-          project.id === projectId ? updatedProject : project
-        )
-      );
-
-      // If the status change moves the project out of the current filter, refetch
-      if (filter === 'ACTIVE' && newStatus === ProjectStatus.FINISHED) {
-        await fetchProjects();
-      } else if (filter === 'FINISHED' && newStatus !== ProjectStatus.FINISHED) {
-        await fetchProjects();
-      }
-
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-      throw err;
-    } finally {
-      setStatusChangeLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchProjects();
-  }, [filter, userId]);
-
-  return {
-    projects,
-    loading,
-    error,
-    statusChangeLoading,
-    refetch: fetchProjects,
-    updateProjectStatus
-  };
+export function useUpdateProjectStatus() {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: ({ projectId, ...data }: UpdateProjectStatusData & { projectId: string }) =>
+      updateProjectStatus(projectId, data),
+    onSuccess: (updatedProject) => {
+      queryClient.invalidateQueries({ queryKey: [PROJECTS_QUERY_KEY] });
+      toast.success(`Project status updated to ${updatedProject.status.toLowerCase().replace("_", " ")}`);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
 }

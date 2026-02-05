@@ -1,217 +1,159 @@
-"use client"
+"use client";
 
-import { useState, useMemo } from "react"
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Project, ProjectStatus } from "@prisma/client"
-import { ProjectCard } from "./ProjectCard"
-import { ProjectFilters } from "./ProjectFilters"
-import { LoadingSpinner } from "./LoadingSpinner"
-import toast from "react-hot-toast"
+import { useState, useMemo } from "react";
+import { useSession } from "next-auth/react";
+import { ProjectCard } from "@/components/ProjectCard";
+import { CreateProjectDialog } from "@/components/CreateProjectDialog";
+import { ProjectFilter } from "@/components/ProjectFilter";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { LogOut, User } from "lucide-react";
+import { useProjects } from "@/hooks/useProjects";
+import { signOut } from "next-auth/react";
 
-type ProjectWithHistory = Project & {
-  statusHistory: Array<{
-    id: string
-    changedAt: Date
-    user: {
-      name: string | null
-      email: string
-    }
-  }>
-}
-
-async function fetchProjects(view?: string, status?: string): Promise<ProjectWithHistory[]> {
-  const params = new URLSearchParams()
-  if (view && view !== "all") {
-    params.append("view", view)
-  }
-  if (status && status !== "all") {
-    params.append("status", status)
-  }
-
-  const response = await fetch(`/api/projects?${params.toString()}`)
-  if (!response.ok) {
-    throw new Error(`Failed to fetch projects: ${response.statusText}`)
-  }
-  return response.json()
-}
-
-async function updateProjectStatus(projectId: string, status: ProjectStatus): Promise<ProjectWithHistory> {
-  const response = await fetch(`/api/projects/${projectId}/status`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ status }),
-  })
-  
-  if (!response.ok) {
-    const error = await response.json()
-    throw new Error(error.error || `Failed to update project status: ${response.statusText}`)
-  }
-  
-  return response.json()
-}
+type FilterType = "active" | "finished";
 
 export function ProjectDashboard() {
-  const [activeView, setActiveView] = useState<"all" | "active" | "finished">("all")
-  const [statusFilter, setStatusFilter] = useState<ProjectStatus | "all">("all")
-  const queryClient = useQueryClient()
+  const { data: session, status } = useSession();
+  const [currentFilter, setCurrentFilter] = useState<FilterType>("active");
+  
+  const {
+    data: projects,
+    isLoading,
+    error,
+    refetch,
+  } = useProjects({ status: currentFilter });
 
-  // Fetch all projects for filtering
-  const { data: allProjects = [], isLoading, error } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => fetchProjects(),
-    staleTime: 30000, // 30 seconds
-  })
+  const projectStats = useMemo(() => {
+    if (!projects) return { active: 0, finished: 0 };
+    
+    return projects.reduce(
+      (acc, project) => {
+        if (project.status === "FINISHED") {
+          acc.finished++;
+        } else {
+          acc.active++;
+        }
+        return acc;
+      },
+      { active: 0, finished: 0 }
+    );
+  }, [projects]);
 
-  // Filter projects based on current filters
-  const filteredProjects = useMemo(() => {
-    let filtered = allProjects
+  const handleFilterChange = (filter: FilterType) => {
+    setCurrentFilter(filter);
+  };
 
-    // Apply view filter
-    if (activeView === "active") {
-      filtered = filtered.filter(p => 
-        p.status === ProjectStatus.IN_PROGRESS || p.status === ProjectStatus.COMPLETE
-      )
-    } else if (activeView === "finished") {
-      filtered = filtered.filter(p => p.status === ProjectStatus.ARCHIVED)
-    }
+  const handleSignOut = () => {
+    signOut({ callbackUrl: "/auth/signin" });
+  };
 
-    // Apply status filter
-    if (statusFilter !== "all") {
-      filtered = filtered.filter(p => p.status === statusFilter)
-    }
-
-    return filtered
-  }, [allProjects, activeView, statusFilter])
-
-  // Calculate project counts
-  const projectCounts = useMemo(() => {
-    const counts = allProjects.reduce((acc, project) => {
-      acc.all++
-      
-      if (project.status === ProjectStatus.ARCHIVED) {
-        acc.finished++
-        acc.archived++
-      } else {
-        acc.active++
-      }
-
-      switch (project.status) {
-        case ProjectStatus.IN_PROGRESS:
-          acc.inProgress++
-          break
-        case ProjectStatus.COMPLETE:
-          acc.complete++
-          break
-        case ProjectStatus.APPROVED:
-          acc.approved++
-          break
-      }
-
-      return acc
-    }, {
-      all: 0,
-      active: 0,
-      finished: 0,
-      inProgress: 0,
-      complete: 0,
-      approved: 0,
-      archived: 0,
-    })
-
-    return counts
-  }, [allProjects])
-
-  // Status update mutation
-  const updateStatusMutation = useMutation({
-    mutationFn: ({ projectId, status }: { projectId: string; status: ProjectStatus }) =>
-      updateProjectStatus(projectId, status),
-    onSuccess: (updatedProject) => {
-      // Update the cache
-      queryClient.setQueryData<ProjectWithHistory[]>(["projects"], (old) => 
-        old?.map(p => p.id === updatedProject.id ? updatedProject : p) || []
-      )
-    },
-    onError: (error: Error) => {
-      console.error("Error updating project status:", error)
-      toast.error(error.message || "Failed to update project status")
-    }
-  })
-
-  const handleStatusUpdate = async (projectId: string, newStatus: ProjectStatus) => {
-    await updateStatusMutation.mutateAsync({ projectId, status: newStatus })
-  }
-
-  if (isLoading) {
+  if (status === "loading") {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <LoadingSpinner />
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="text-center py-12">
-        <div className="text-red-600 mb-4">
-          <h3 className="text-lg font-semibold">Error Loading Projects</h3>
-          <p className="text-sm">
-            {error instanceof Error ? error.message : "An unexpected error occurred"}
-          </p>
+      <div className="container mx-auto py-8 space-y-6">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-12 w-full" />
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-32 w-full" />
+          ))}
         </div>
-        <button
-          onClick={() => queryClient.invalidateQueries({ queryKey: ["projects"] })}
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-        >
-          Retry
-        </button>
       </div>
-    )
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="container mx-auto py-8">
+        <Alert>
+          <AlertDescription>
+            Please sign in to access your projects.
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          Project Dashboard
-        </h1>
-        <p className="text-gray-600">
-          Manage your projects and track their progress
-        </p>
-      </div>
-
-      <ProjectFilters
-        activeView={activeView}
-        onViewChange={setActiveView}
-        statusFilter={statusFilter}
-        onStatusFilterChange={setStatusFilter}
-        projectCounts={projectCounts}
-      />
-
-      {filteredProjects.length === 0 ? (
-        <div className="text-center py-12">
-          <h3 className="text-lg font-medium text-gray-900 mb-2">
-            No projects found
-          </h3>
-          <p className="text-gray-500">
-            {statusFilter !== "all" || activeView !== "all" 
-              ? "Try adjusting your filters to see more projects."
-              : "Create your first project to get started."
-            }
+    <div className="container mx-auto py-8 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Project Dashboard</h1>
+          <p className="text-muted-foreground">
+            Welcome back, {session.user?.name || session.user?.email}
           </p>
         </div>
-      ) : (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {filteredProjects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              onStatusUpdate={handleStatusUpdate}
-            />
+        
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleSignOut}>
+            <LogOut className="h-4 w-4 mr-2" />
+            Sign Out
+          </Button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid gap-4 md:grid-cols-3">
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-2xl font-bold">{projectStats.active}</div>
+          <p className="text-sm text-muted-foreground">Active Projects</p>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-2xl font-bold">{projectStats.finished}</div>
+          <p className="text-sm text-muted-foreground">Finished Projects</p>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-2xl font-bold">{projectStats.active + projectStats.finished}</div>
+          <p className="text-sm text-muted-foreground">Total Projects</p>
+        </div>
+      </div>
+
+      {/* Actions and Filter */}
+      <div className="flex items-center justify-between gap-4">
+        <ProjectFilter onFilterChange={handleFilterChange} />
+        <CreateProjectDialog />
+      </div>
+
+      {/* Projects Grid */}
+      {isLoading ? (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-32 w-full" />
           ))}
+        </div>
+      ) : error ? (
+        <Alert variant="destructive">
+          <AlertDescription>
+            Failed to load projects. Please try again.
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-2"
+              onClick={() => refetch()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : projects && projects.length > 0 ? (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {projects.map((project) => (
+            <ProjectCard key={project.id} project={project} />
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-12">
+          <div className="text-muted-foreground mb-4">
+            {currentFilter === "active" 
+              ? "No active projects yet. Create your first project to get started!"
+              : "No finished projects yet."
+            }
+          </div>
+          {currentFilter === "active" && <CreateProjectDialog />}
         </div>
       )}
     </div>
-  )
+  );
 }

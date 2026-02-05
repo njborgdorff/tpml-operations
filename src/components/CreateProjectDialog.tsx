@@ -1,110 +1,133 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Label } from "@/components/ui/label"
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { Plus } from "lucide-react";
+import { useCreateProject } from "@/hooks/useProjects";
+
+const createProjectSchema = z.object({
+  name: z.string().min(1, "Project name is required").max(100, "Project name too long"),
+  description: z.string().max(500, "Description too long").optional(),
+});
+
+type CreateProjectForm = z.infer<typeof createProjectSchema>;
 
 interface CreateProjectDialogProps {
-  onProjectCreated: () => void
+  trigger?: React.ReactNode;
 }
 
-export function CreateProjectDialog({ onProjectCreated }: CreateProjectDialogProps) {
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState("")
-  const [description, setDescription] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
+export function CreateProjectDialog({ trigger }: CreateProjectDialogProps) {
+  const [open, setOpen] = useState(false);
+  const createProjectMutation = useCreateProject();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    
-    if (!name.trim()) {
-      return
-    }
+  const form = useForm<CreateProjectForm>({
+    resolver: zodResolver(createProjectSchema),
+    defaultValues: {
+      name: "",
+      description: "",
+    },
+  });
 
-    setIsLoading(true)
-    
+  const onSubmit = async (data: CreateProjectForm) => {
     try {
-      const response = await fetch('/api/projects', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: name.trim(),
-          description: description.trim(),
-        }),
-      })
-
-      if (response.ok) {
-        setName("")
-        setDescription("")
-        setOpen(false)
-        onProjectCreated()
-      } else {
-        console.error('Failed to create project')
-      }
+      await createProjectMutation.mutateAsync(data);
+      form.reset();
+      setOpen(false);
     } catch (error) {
-      console.error('Error creating project:', error)
-    } finally {
-      setIsLoading(false)
+      // Error is handled by the mutation
     }
-  }
+  };
 
-  const handleOpenChange = (newOpen: boolean) => {
-    setOpen(newOpen)
-    if (!newOpen) {
-      setName("")
-      setDescription("")
-    }
-  }
+  const defaultTrigger = (
+    <Button>
+      <Plus className="h-4 w-4 mr-2" />
+      New Project
+    </Button>
+  );
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button>Create Project</Button>
+        {trigger || defaultTrigger}
       </DialogTrigger>
-      <DialogContent>
-        <form onSubmit={handleSubmit}>
-          <DialogHeader>
-            <DialogTitle>Create New Project</DialogTitle>
-            <DialogDescription>
-              Create a new project to start tracking its progress.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">Project Name</Label>
-              <Input
-                id="name"
-                placeholder="Enter project name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
+      <DialogContent className="sm:max-w-[425px]">
+        <DialogHeader>
+          <DialogTitle>Create New Project</DialogTitle>
+        </DialogHeader>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Project Name</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="Enter project name"
+                      {...field}
+                      disabled={createProjectMutation.isPending}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Description (Optional)</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      placeholder="Enter project description"
+                      className="resize-none"
+                      rows={3}
+                      {...field}
+                      disabled={createProjectMutation.isPending}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <div className="flex justify-end space-x-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOpen(false)}
+                disabled={createProjectMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createProjectMutation.isPending}>
+                {createProjectMutation.isPending ? "Creating..." : "Create Project"}
+              </Button>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="description">Description (Optional)</Label>
-              <Textarea
-                id="description"
-                placeholder="Enter project description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isLoading || !name.trim()}>
-              {isLoading ? "Creating..." : "Create Project"}
-            </Button>
-          </DialogFooter>
-        </form>
+          </form>
+        </Form>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

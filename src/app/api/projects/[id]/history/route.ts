@@ -1,5 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { prisma } from "@/lib/prisma";
+import { authOptions } from "@/lib/auth";
 
 interface RouteParams {
   params: {
@@ -9,49 +11,58 @@ interface RouteParams {
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { id } = params;
 
-    const project = await prisma.project.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        name: true
-      }
+    if (!id) {
+      return NextResponse.json(
+        { error: "Project ID is required" },
+        { status: 400 }
+      );
+    }
+
+    // Check if project exists and user owns it
+    const project = await prisma.project.findFirst({
+      where: {
+        id,
+        userId: session.user.id,
+      },
     });
 
     if (!project) {
       return NextResponse.json(
-        { error: 'Project not found' },
+        { error: "Project not found or access denied" },
         { status: 404 }
       );
     }
 
     const history = await prisma.projectStatusHistory.findMany({
       where: {
-        projectId: id
+        projectId: id,
       },
       include: {
-        user: {
+        project: {
           select: {
             id: true,
             name: true,
-            email: true
-          }
-        }
+            email: true,
+          },
+        },
       },
       orderBy: {
-        changedAt: 'desc'
-      }
+        changedAt: "desc",
+      },
     });
 
-    return NextResponse.json({
-      project,
-      history
-    });
+    return NextResponse.json(history);
   } catch (error) {
-    console.error('Error fetching project history:', error);
+    console.error("Error fetching project history:", error);
     return NextResponse.json(
-      { error: 'Failed to fetch project history' },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }

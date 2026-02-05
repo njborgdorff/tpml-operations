@@ -1,127 +1,130 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { Project, ProjectStatus } from '@/lib/types';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ProjectStatusBadge } from './ProjectStatusBadge';
-import { ProjectStatusSelect } from './ProjectStatusSelect';
-import { formatDate, formatDateTime } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
+import { useState } from "react";
+import { useSession } from "next-auth/react";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { MoreVertical, Clock, CheckCircle, Award, Archive } from "lucide-react";
+import { ProjectWithUser, ProjectStatus, ProjectStatusLabels, ProjectStatusColors } from "@/types/project";
+import { useUpdateProjectStatus } from "@/hooks/useProjects";
+import { formatDistanceToNow } from "date-fns";
 
 interface ProjectCardProps {
-  project: Project;
-  onStatusChange?: (projectId: string, newStatus: ProjectStatus) => void;
-  onStatusChangeLoading?: boolean;
-  currentUserId?: string;
+  project: ProjectWithUser;
 }
 
-export function ProjectCard({ 
-  project, 
-  onStatusChange, 
-  onStatusChangeLoading = false,
-  currentUserId = 'temp-user' // TODO: Replace with actual user ID from auth
-}: ProjectCardProps) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [selectedStatus, setSelectedStatus] = useState<ProjectStatus>(project.status as ProjectStatus);
+const StatusIcons = {
+  IN_PROGRESS: Clock,
+  COMPLETE: CheckCircle,
+  APPROVED: Award,
+  FINISHED: Archive,
+};
 
-  const handleStatusChange = async () => {
-    if (onStatusChange && selectedStatus !== project.status) {
-      await onStatusChange(project.id, selectedStatus);
+export function ProjectCard({ project }: ProjectCardProps) {
+  const { data: session } = useSession();
+  const updateStatusMutation = useUpdateProjectStatus();
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const StatusIcon = StatusIcons[project.status];
+  const canEdit = session?.user?.id === project.userId;
+
+  const handleStatusChange = async (newStatus: ProjectStatus) => {
+    if (!canEdit) return;
+    
+    setIsUpdating(true);
+    try {
+      await updateStatusMutation.mutateAsync({
+        projectId: project.id,
+        status: newStatus,
+      });
+    } finally {
+      setIsUpdating(false);
     }
-    setIsEditing(false);
   };
 
-  const handleCancel = () => {
-    setSelectedStatus(project.status as ProjectStatus);
-    setIsEditing(false);
+  const getAvailableStatuses = (): ProjectStatus[] => {
+    switch (project.status) {
+      case "IN_PROGRESS":
+        return ["COMPLETE"];
+      case "COMPLETE":
+        return ["IN_PROGRESS", "APPROVED"];
+      case "APPROVED":
+        return ["COMPLETE", "FINISHED"];
+      case "FINISHED":
+        return []; // Finished projects cannot be changed
+      default:
+        return [];
+    }
   };
 
-  const latestHistory = project.statusHistory?.[0];
+  const availableStatuses = getAvailableStatuses();
 
   return (
     <Card className="w-full">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <CardTitle className="text-lg">{project.name}</CardTitle>
-            {project.description && (
-              <CardDescription className="mt-1">
-                {project.description}
-              </CardDescription>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {!isEditing ? (
-              <>
-                <ProjectStatusBadge status={project.status as ProjectStatus} />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setIsEditing(true)}
-                  className="text-xs"
-                >
-                  Edit
-                </Button>
-              </>
-            ) : (
-              <div className="flex items-center gap-2">
-                <ProjectStatusSelect
-                  value={selectedStatus}
-                  onValueChange={setSelectedStatus}
-                  disabled={onStatusChangeLoading}
-                  className="w-32"
-                />
-                <Button
-                  size="sm"
-                  onClick={handleStatusChange}
-                  disabled={onStatusChangeLoading}
-                  className="text-xs"
-                >
-                  Save
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCancel}
-                  disabled={onStatusChangeLoading}
-                  className="text-xs"
-                >
-                  Cancel
-                </Button>
-              </div>
-            )}
-          </div>
+      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+        <div className="space-y-1 flex-1">
+          <h3 className="font-semibold leading-none tracking-tight">
+            {project.name}
+          </h3>
+          {project.description && (
+            <p className="text-sm text-muted-foreground line-clamp-2">
+              {project.description}
+            </p>
+          )}
         </div>
+        
+        {canEdit && availableStatuses.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                disabled={isUpdating}
+              >
+                <MoreVertical className="h-4 w-4" />
+                <span className="sr-only">Open menu</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {availableStatuses.map((status) => (
+                <DropdownMenuItem
+                  key={status}
+                  onClick={() => handleStatusChange(status)}
+                  disabled={isUpdating}
+                >
+                  Mark as {ProjectStatusLabels[status]}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </CardHeader>
+      
       <CardContent>
-        <div className="space-y-2 text-sm text-muted-foreground">
-          <div className="flex justify-between">
-            <span>Created:</span>
-            <span>{formatDate(project.createdAt)}</span>
+        <div className="flex items-center justify-between">
+          <Badge className={`${ProjectStatusColors[project.status]} flex items-center gap-1`}>
+            <StatusIcon className="h-3 w-3" />
+            {ProjectStatusLabels[project.status]}
+          </Badge>
+          
+          <div className="text-xs text-muted-foreground">
+            Updated {formatDistanceToNow(new Date(project.updatedAt), { addSuffix: true })}
           </div>
-          <div className="flex justify-between">
-            <span>Last Updated:</span>
-            <span>{formatDate(project.updatedAt)}</span>
-          </div>
-          {project.archivedAt && (
-            <div className="flex justify-between">
-              <span>Archived:</span>
-              <span>{formatDate(project.archivedAt)}</span>
-            </div>
-          )}
-          {latestHistory && (
-            <div className="flex justify-between">
-              <span>Status Changed:</span>
-              <span>{formatDateTime(latestHistory.changedAt)}</span>
-            </div>
-          )}
-          {project.user && (
-            <div className="flex justify-between">
-              <span>Owner:</span>
-              <span>{project.user.name || project.user.email}</span>
-            </div>
-          )}
         </div>
+        
+        {project.archivedAt && (
+          <div className="mt-2 text-xs text-muted-foreground">
+            Archived {formatDistanceToNow(new Date(project.archivedAt), { addSuffix: true })}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
