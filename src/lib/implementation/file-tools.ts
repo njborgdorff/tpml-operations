@@ -407,6 +407,121 @@ Respond with a JSON object (no markdown, just raw JSON):
 }
 
 /**
+ * Deployment status result from GitHub
+ */
+export interface DeploymentStatus {
+  hasDeployments: boolean;
+  latestStatus?: 'pending' | 'success' | 'failure' | 'error' | 'in_progress' | 'queued';
+  deploymentUrl?: string;
+  environment?: string;
+  description?: string;
+}
+
+/**
+ * Check GitHub deployment status for a commit.
+ * This queries the GitHub Deployments API to see if Vercel (or other CI) has created deployments.
+ */
+export async function getDeploymentStatus(
+  repo: string,
+  commitSha: string
+): Promise<DeploymentStatus> {
+  const githubToken = process.env.GITHUB_TOKEN;
+  if (!githubToken) {
+    return { hasDeployments: false };
+  }
+
+  try {
+    // Get deployments for this repo
+    const deploymentsResponse = await fetch(
+      `https://api.github.com/repos/${repo}/deployments?sha=${commitSha}`,
+      {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    if (!deploymentsResponse.ok) {
+      console.log(`[Deployment] Failed to fetch deployments: ${deploymentsResponse.status}`);
+      return { hasDeployments: false };
+    }
+
+    const deployments = await deploymentsResponse.json();
+
+    if (!deployments || deployments.length === 0) {
+      return { hasDeployments: false };
+    }
+
+    // Get the latest deployment
+    const latestDeployment = deployments[0];
+
+    // Get statuses for this deployment
+    const statusesResponse = await fetch(
+      `https://api.github.com/repos/${repo}/deployments/${latestDeployment.id}/statuses`,
+      {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    if (!statusesResponse.ok) {
+      return {
+        hasDeployments: true,
+        environment: latestDeployment.environment,
+        latestStatus: 'pending',
+      };
+    }
+
+    const statuses = await statusesResponse.json();
+    const latestStatusObj = statuses[0];
+
+    return {
+      hasDeployments: true,
+      latestStatus: latestStatusObj?.state || 'pending',
+      deploymentUrl: latestStatusObj?.target_url || latestStatusObj?.environment_url,
+      environment: latestDeployment.environment,
+      description: latestStatusObj?.description,
+    };
+  } catch (error) {
+    console.error('[Deployment] Error checking deployment status:', error);
+    return { hasDeployments: false };
+  }
+}
+
+/**
+ * Wait for deployment and return final status.
+ * Polls GitHub every 10 seconds for up to maxWaitMs.
+ */
+export async function waitForDeployment(
+  repo: string,
+  commitSha: string,
+  maxWaitMs: number = 120000 // 2 minutes default
+): Promise<DeploymentStatus> {
+  const startTime = Date.now();
+  const pollInterval = 10000; // 10 seconds
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const status = await getDeploymentStatus(repo, commitSha);
+
+    // If we have a final status, return it
+    if (status.hasDeployments &&
+        status.latestStatus &&
+        !['pending', 'in_progress', 'queued'].includes(status.latestStatus)) {
+      return status;
+    }
+
+    // Wait before polling again
+    await new Promise(resolve => setTimeout(resolve, pollInterval));
+  }
+
+  // Return whatever status we have after timeout
+  return getDeploymentStatus(repo, commitSha);
+}
+
+/**
  * Apply file operations via GitHub API
  */
 export async function applyOperationsViaGitHub(

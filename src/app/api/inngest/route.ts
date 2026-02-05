@@ -12,7 +12,7 @@ import { serve } from 'inngest/next';
 import { Inngest } from 'inngest';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaClient } from '@prisma/client';
-import { runImplementation, applyOperationsViaGitHub, validateGeneratedCode, FileOperation, ValidationResult } from '@/lib/implementation/file-tools';
+import { runImplementation, applyOperationsViaGitHub, validateGeneratedCode, getDeploymentStatus, FileOperation, ValidationResult, DeploymentStatus } from '@/lib/implementation/file-tools';
 
 // Note: Implementation now uses Claude tool_use to generate actual file operations
 // These can be applied via GitHub API (serverless) or local worker
@@ -2301,16 +2301,36 @@ ${implementationResult.operations.map((op: FileOperation) => `- ${op.type}: ${op
           );
         });
 
-        // Post commit result
+        // Post commit result with prominent branch/repo info
+        const branchName = `sprint-${sprintNumber}-implementation`;
+        const commitUrl = `https://github.com/${targetRepo}/commit/${commitResult.commitSha}`;
+        const branchUrl = `https://github.com/${targetRepo}/tree/${branchName}`;
+
         await step.run(`post-commit-result${iterSuffix}`, async () => {
           if (commitResult.success) {
             return postAsRole('Implementer', channel, 'Code committed to GitHub', [
               {
-                type: 'section',
+                type: 'header',
                 text: {
-                  type: 'mrkdwn',
-                  text: `✅ *Code Committed to GitHub*\n\nCommit: \`${commitResult.commitSha?.substring(0, 7)}\`\nBranch: \`sprint-${sprintNumber}-implementation\`\nFiles: ${implementationResult.operations.length}`,
+                  type: 'plain_text',
+                  text: '✅ Code Committed to GitHub',
+                  emoji: true,
                 },
+              },
+              {
+                type: 'section',
+                fields: [
+                  { type: 'mrkdwn', text: `*Repository:*\n<https://github.com/${targetRepo}|${targetRepo}>` },
+                  { type: 'mrkdwn', text: `*Branch:*\n<${branchUrl}|\`${branchName}\`>` },
+                  { type: 'mrkdwn', text: `*Commit:*\n<${commitUrl}|\`${commitResult.commitSha?.substring(0, 7)}\`>` },
+                  { type: 'mrkdwn', text: `*Files Changed:*\n${implementationResult.operations.length} files` },
+                ],
+              },
+              {
+                type: 'context',
+                elements: [
+                  { type: 'mrkdwn', text: `_Iteration ${iteration} | Sprint ${sprintNumber}_` },
+                ],
               },
             ], kickoffMessage?.ts);
           } else {
@@ -2319,12 +2339,42 @@ ${implementationResult.operations.map((op: FileOperation) => `- ${op.type}: ${op
                 type: 'section',
                 text: {
                   type: 'mrkdwn',
-                  text: `⚠️ *GitHub Commit Failed*\n\nError: ${commitResult.error}\n\nCode was generated but not committed. File operations stored in artifacts.`,
+                  text: `⚠️ *GitHub Commit Failed*\n\n*Target:* \`${targetRepo}\` → \`${branchName}\`\n*Error:* ${commitResult.error}\n\nCode was generated but not committed. File operations stored in artifacts.`,
                 },
               },
             ], kickoffMessage?.ts);
           }
         });
+
+        // Check deployment status after commit (give Vercel a moment to start)
+        if (commitResult.success && commitResult.commitSha) {
+          await step.run(`check-deployment-status${iterSuffix}`, async () => {
+            // Wait 15 seconds for Vercel to create the deployment
+            await new Promise(resolve => setTimeout(resolve, 15000));
+
+            const deployStatus = await getDeploymentStatus(targetRepo, commitResult.commitSha!);
+
+            if (deployStatus.hasDeployments) {
+              const statusEmoji = deployStatus.latestStatus === 'success' ? '✅' :
+                                  deployStatus.latestStatus === 'failure' || deployStatus.latestStatus === 'error' ? '❌' :
+                                  '🔄';
+              const statusText = deployStatus.latestStatus === 'success' ? 'Deployed Successfully' :
+                                 deployStatus.latestStatus === 'failure' || deployStatus.latestStatus === 'error' ? 'Deployment Failed' :
+                                 'Deployment In Progress';
+
+              return postAsRole('DevOps', channel, 'Deployment status update', [
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: `${statusEmoji} *${statusText}*\n\n*Environment:* ${deployStatus.environment || 'Preview'}${deployStatus.deploymentUrl ? `\n*Preview URL:* <${deployStatus.deploymentUrl}|View Deployment>` : ''}${deployStatus.description ? `\n*Status:* ${deployStatus.description}` : ''}`,
+                  },
+                },
+              ], kickoffMessage?.ts);
+            }
+            return { checked: true, noDeployments: true };
+          });
+        }
       }
 
       // Post implementation progress
@@ -2666,15 +2716,35 @@ ${fixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`).jo
             );
           });
 
+          const fixBranchName = `sprint-${sprintNumber}-implementation`;
+          const fixCommitUrl = `https://github.com/${targetRepo}/commit/${fixCommitResult.commitSha}`;
+          const fixBranchUrl = `https://github.com/${targetRepo}/tree/${fixBranchName}`;
+
           await step.run(`post-fix-commit-result${iterSuffix}`, async () => {
             if (fixCommitResult.success) {
               return postAsRole('Implementer', channel, 'Fix committed to GitHub', [
                 {
-                  type: 'section',
+                  type: 'header',
                   text: {
-                    type: 'mrkdwn',
-                    text: `✅ *Fixes Committed to GitHub*\n\nCommit: \`${fixCommitResult.commitSha?.substring(0, 7)}\`\nFiles fixed: ${fixResult.operations.length}`,
+                    type: 'plain_text',
+                    text: '✅ Fixes Committed to GitHub',
+                    emoji: true,
                   },
+                },
+                {
+                  type: 'section',
+                  fields: [
+                    { type: 'mrkdwn', text: `*Repository:*\n<https://github.com/${targetRepo}|${targetRepo}>` },
+                    { type: 'mrkdwn', text: `*Branch:*\n<${fixBranchUrl}|\`${fixBranchName}\`>` },
+                    { type: 'mrkdwn', text: `*Commit:*\n<${fixCommitUrl}|\`${fixCommitResult.commitSha?.substring(0, 7)}\`>` },
+                    { type: 'mrkdwn', text: `*Files Fixed:*\n${fixResult.operations.length} files` },
+                  ],
+                },
+                {
+                  type: 'context',
+                  elements: [
+                    { type: 'mrkdwn', text: `_Reviewer Fix | Iteration ${iteration}_` },
+                  ],
                 },
               ], kickoffMessage?.ts);
             } else {
@@ -2683,12 +2753,34 @@ ${fixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`).jo
                   type: 'section',
                   text: {
                     type: 'mrkdwn',
-                    text: `⚠️ *GitHub Commit Failed*\n\nError: ${fixCommitResult.error}`,
+                    text: `⚠️ *GitHub Commit Failed*\n\n*Target:* \`${targetRepo}\` → \`${fixBranchName}\`\n*Error:* ${fixCommitResult.error}`,
                   },
                 },
               ], kickoffMessage?.ts);
             }
           });
+
+          // Check deployment status for fix
+          if (fixCommitResult.success && fixCommitResult.commitSha) {
+            await step.run(`check-fix-deployment-status${iterSuffix}`, async () => {
+              await new Promise(resolve => setTimeout(resolve, 15000));
+              const deployStatus = await getDeploymentStatus(targetRepo, fixCommitResult.commitSha!);
+              if (deployStatus.hasDeployments) {
+                const statusEmoji = deployStatus.latestStatus === 'success' ? '✅' :
+                                    deployStatus.latestStatus === 'failure' || deployStatus.latestStatus === 'error' ? '❌' : '🔄';
+                return postAsRole('DevOps', channel, 'Deployment status', [
+                  {
+                    type: 'section',
+                    text: {
+                      type: 'mrkdwn',
+                      text: `${statusEmoji} *Deployment:* ${deployStatus.latestStatus}${deployStatus.deploymentUrl ? ` | <${deployStatus.deploymentUrl}|View>` : ''}`,
+                    },
+                  },
+                ], kickoffMessage?.ts);
+              }
+              return { checked: true };
+            });
+          }
 
           allFilesModified = Array.from(new Set([...allFilesModified, ...fixResult.filesModified]));
         }
@@ -3014,15 +3106,35 @@ ${bugfixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`)
             );
           });
 
+          const bugfixBranchName = `sprint-${sprintNumber}-implementation`;
+          const bugfixCommitUrl = `https://github.com/${targetRepo}/commit/${bugfixCommitResult.commitSha}`;
+          const bugfixBranchUrl = `https://github.com/${targetRepo}/tree/${bugfixBranchName}`;
+
           await step.run(`post-bugfix-commit-result${iterSuffix}`, async () => {
             if (bugfixCommitResult.success) {
               return postAsRole('Implementer', channel, 'Bugfix committed to GitHub', [
                 {
-                  type: 'section',
+                  type: 'header',
                   text: {
-                    type: 'mrkdwn',
-                    text: `✅ *Bugfixes Committed to GitHub*\n\nCommit: \`${bugfixCommitResult.commitSha?.substring(0, 7)}\`\nFiles fixed: ${bugfixResult.operations.length}`,
+                    type: 'plain_text',
+                    text: '✅ Bugfixes Committed to GitHub',
+                    emoji: true,
                   },
+                },
+                {
+                  type: 'section',
+                  fields: [
+                    { type: 'mrkdwn', text: `*Repository:*\n<https://github.com/${targetRepo}|${targetRepo}>` },
+                    { type: 'mrkdwn', text: `*Branch:*\n<${bugfixBranchUrl}|\`${bugfixBranchName}\`>` },
+                    { type: 'mrkdwn', text: `*Commit:*\n<${bugfixCommitUrl}|\`${bugfixCommitResult.commitSha?.substring(0, 7)}\`>` },
+                    { type: 'mrkdwn', text: `*Files Fixed:*\n${bugfixResult.operations.length} files` },
+                  ],
+                },
+                {
+                  type: 'context',
+                  elements: [
+                    { type: 'mrkdwn', text: `_QA Bugfix | Iteration ${iteration}_` },
+                  ],
                 },
               ], kickoffMessage?.ts);
             } else {
@@ -3031,12 +3143,34 @@ ${bugfixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`)
                   type: 'section',
                   text: {
                     type: 'mrkdwn',
-                    text: `⚠️ *GitHub Commit Failed*\n\nError: ${bugfixCommitResult.error}`,
+                    text: `⚠️ *GitHub Commit Failed*\n\n*Target:* \`${targetRepo}\` → \`${bugfixBranchName}\`\n*Error:* ${bugfixCommitResult.error}`,
                   },
                 },
               ], kickoffMessage?.ts);
             }
           });
+
+          // Check deployment status for bugfix
+          if (bugfixCommitResult.success && bugfixCommitResult.commitSha) {
+            await step.run(`check-bugfix-deployment-status${iterSuffix}`, async () => {
+              await new Promise(resolve => setTimeout(resolve, 15000));
+              const deployStatus = await getDeploymentStatus(targetRepo, bugfixCommitResult.commitSha!);
+              if (deployStatus.hasDeployments) {
+                const statusEmoji = deployStatus.latestStatus === 'success' ? '✅' :
+                                    deployStatus.latestStatus === 'failure' || deployStatus.latestStatus === 'error' ? '❌' : '🔄';
+                return postAsRole('DevOps', channel, 'Deployment status', [
+                  {
+                    type: 'section',
+                    text: {
+                      type: 'mrkdwn',
+                      text: `${statusEmoji} *Deployment:* ${deployStatus.latestStatus}${deployStatus.deploymentUrl ? ` | <${deployStatus.deploymentUrl}|View>` : ''}`,
+                    },
+                  },
+                ], kickoffMessage?.ts);
+              }
+              return { checked: true };
+            });
+          }
 
           allFilesModified = Array.from(new Set([...allFilesModified, ...bugfixResult.filesModified]));
         }
