@@ -2148,9 +2148,12 @@ Keep your response focused on architecture validation. Be concise but thorough.`
     let allFilesModified: string[] = []; // Track all files across iterations
     const allOperations: FileOperation[] = []; // Track all file operations with content across iterations
 
+    console.log(`[Workflow] Starting implementation loop for ${projectName}, Sprint ${sprintNumber}`);
+
     while (!workflowComplete && iteration < MAX_ITERATIONS) {
       iteration++;
       const iterSuffix = iteration > 1 ? `-iter${iteration}` : '';
+      console.log(`[Workflow] Starting iteration ${iteration} for ${projectName}`);
 
       // Announce implementation starting
       await step.run(`implementer-starting${iterSuffix}`, async () => {
@@ -3041,6 +3044,7 @@ Keep your response focused on deployment preparation. Be concise but thorough.`;
 
       // Workflow complete - request human approval
       workflowComplete = true;
+      console.log(`[Workflow] Workflow COMPLETE for ${projectName}, Sprint ${sprintNumber} after ${iteration} iteration(s)`);
 
       await step.run(`request-human-approval${iterSuffix}`, async () => {
         return postAsRole('PM', channel, 'Sprint ready for human approval', [
@@ -3090,49 +3094,65 @@ Keep your response focused on deployment preparation. Be concise but thorough.`;
     }
 
     // Complete current sprint and set next sprint to AWAITING_APPROVAL
+    console.log(`[Workflow] Starting completion step for project ${projectName}, sprint ${sprintNumber}`);
+
     const nextSprintInfo = await step.run('complete-sprint-setup-next', async () => {
-      // Find and complete current sprint
-      const currentSprint = await prisma.sprint.findFirst({
-        where: { projectId, number: sprintNumber },
-      });
-
-      if (currentSprint) {
-        await prisma.sprint.update({
-          where: { id: currentSprint.id },
-          data: {
-            status: 'COMPLETED',
-            completedAt: new Date(),
-          },
-        });
-      }
-
-      // Find next sprint and set to AWAITING_APPROVAL
-      const nextSprint = await prisma.sprint.findFirst({
-        where: { projectId, number: sprintNumber + 1 },
-      });
-
-      if (nextSprint) {
-        await prisma.sprint.update({
-          where: { id: nextSprint.id },
-          data: { status: 'AWAITING_APPROVAL' },
+      try {
+        // Find and complete current sprint
+        console.log(`[Workflow] Finding sprint ${sprintNumber} for project ${projectId}`);
+        const currentSprint = await prisma.sprint.findFirst({
+          where: { projectId, number: sprintNumber },
         });
 
-        return {
-          hasNext: true,
-          nextSprintId: nextSprint.id,
-          nextSprintNumber: nextSprint.number,
-          nextSprintName: nextSprint.name,
-          nextSprintGoal: nextSprint.goal,
-        };
+        if (currentSprint) {
+          console.log(`[Workflow] Marking sprint ${currentSprint.id} as COMPLETED`);
+          await prisma.sprint.update({
+            where: { id: currentSprint.id },
+            data: {
+              status: 'COMPLETED',
+              completedAt: new Date(),
+            },
+          });
+          console.log(`[Workflow] Sprint ${sprintNumber} marked COMPLETED successfully`);
+        } else {
+          console.error(`[Workflow] ERROR: Could not find sprint ${sprintNumber} for project ${projectId}`);
+        }
+
+        // Find next sprint and set to AWAITING_APPROVAL
+        const nextSprint = await prisma.sprint.findFirst({
+          where: { projectId, number: sprintNumber + 1 },
+        });
+
+        if (nextSprint) {
+          console.log(`[Workflow] Found next sprint ${nextSprint.number}, marking as AWAITING_APPROVAL`);
+          await prisma.sprint.update({
+            where: { id: nextSprint.id },
+            data: { status: 'AWAITING_APPROVAL' },
+          });
+
+          return {
+            hasNext: true,
+            nextSprintId: nextSprint.id,
+            nextSprintNumber: nextSprint.number,
+            nextSprintName: nextSprint.name,
+            nextSprintGoal: nextSprint.goal,
+          };
+        }
+
+        // No more sprints - mark project complete
+        console.log(`[Workflow] No more sprints - marking project ${projectId} as COMPLETED`);
+        await prisma.project.update({
+          where: { id: projectId },
+          data: { status: 'COMPLETED' },
+        });
+        console.log(`[Workflow] Project ${projectName} marked COMPLETED successfully`);
+
+        return { hasNext: false };
+      } catch (error) {
+        console.error(`[Workflow] ERROR in complete-sprint-setup-next:`, error);
+        // Re-throw to let Inngest handle the error
+        throw error;
       }
-
-      // No more sprints - mark project complete
-      await prisma.project.update({
-        where: { id: projectId },
-        data: { status: 'COMPLETED' },
-      });
-
-      return { hasNext: false };
     });
 
     // PM announces sprint completion with next steps
