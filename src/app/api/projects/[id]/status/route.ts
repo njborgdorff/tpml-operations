@@ -1,68 +1,65 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { ProjectStatus } from '@/types/project'
+import { authOptions } from '@/lib/auth'
 
-interface RouteParams {
-  params: {
-    id: string
-  }
-}
-
-export async function PATCH(request: NextRequest, { params }: RouteParams) {
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
+    
+    if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const body = await request.json()
     const { status } = body
 
-    if (!status) {
+    if (!status || !Object.values(ProjectStatus).includes(status)) {
       return NextResponse.json(
-        { error: 'Status is required' },
+        { error: 'Valid status is required' },
         { status: 400 }
       )
     }
 
-    const validStatuses = ['IN_PROGRESS', 'COMPLETE', 'APPROVED', 'FINISHED']
-    if (!validStatuses.includes(status)) {
-      return NextResponse.json(
-        { error: 'Invalid status' },
-        { status: 400 }
-      )
-    }
-
-    // Get current project to check ownership and current status
-    const currentProject = await prisma.project.findUnique({
-      where: { id: params.id }
+    // Find the user
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email }
     })
 
-    if (!currentProject) {
-      return NextResponse.json(
-        { error: 'Project not found' },
-        { status: 404 }
-      )
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
-    if (currentProject.userId !== session.user.id) {
-      return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      )
+    // Find the project and verify ownership
+    const project = await prisma.project.findFirst({
+      where: {
+        id: params.id,
+        userId: user.id
+      }
+    })
+
+    if (!project) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    // Update project status
-    const project = await prisma.project.update({
+    // Update the project status
+    const updatedProject = await prisma.project.update({
       where: { id: params.id },
       data: { 
         status,
-        archivedAt: status === 'FINISHED' ? new Date() : null
+        archivedAt: status === ProjectStatus.FINISHED ? new Date() : project.archivedAt
       },
       include: {
         user: {
-          select: { id: true, name: true, email: true }
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
         }
       }
     })
@@ -70,14 +67,14 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     // Create status history entry
     await prisma.projectStatusHistory.create({
       data: {
-        projectId: params.id,
-        oldStatus: currentProject.status,
+        projectId: project.id,
+        oldStatus: project.status,
         newStatus: status,
-        changedBy: session.user.id
+        changedBy: user.id
       }
     })
 
-    return NextResponse.json(project)
+    return NextResponse.json(updatedProject)
   } catch (error) {
     console.error('Error updating project status:', error)
     return NextResponse.json(

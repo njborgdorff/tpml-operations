@@ -1,37 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { ProjectStatus } from '@/types/project'
+import { authOptions } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
+    
+    if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { searchParams } = new URL(request.url)
-    const status = searchParams.get('status')
+    const filter = searchParams.get('filter') || 'all'
 
     let whereClause: any = {
-      userId: session.user.id
+      user: {
+        email: session.user.email
+      }
     }
 
-    if (status === 'active') {
-      whereClause.status = { in: ['IN_PROGRESS', 'COMPLETE'] }
-    } else if (status === 'finished') {
-      whereClause.status = 'FINISHED'
-    } else if (status) {
-      whereClause.status = status
+    // Apply status filtering
+    if (filter === 'active') {
+      whereClause.status = {
+        in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE]
+      }
+    } else if (filter === 'finished') {
+      whereClause.status = ProjectStatus.FINISHED
     }
 
     const projects = await prisma.project.findMany({
       where: whereClause,
-      orderBy: { updatedAt: 'desc' },
       include: {
         user: {
-          select: { id: true, name: true, email: true }
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
         }
+      },
+      orderBy: {
+        updatedAt: 'desc'
       }
     })
 
@@ -48,7 +59,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
+    
+    if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -62,16 +74,30 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Find the user
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email }
+    })
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
+
+    // Create the project
     const project = await prisma.project.create({
       data: {
         name,
-        description: description || '',
-        status: 'IN_PROGRESS',
-        userId: session.user.id
+        description,
+        status: ProjectStatus.IN_PROGRESS,
+        userId: user.id
       },
       include: {
         user: {
-          select: { id: true, name: true, email: true }
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
         }
       }
     })
@@ -80,8 +106,9 @@ export async function POST(request: NextRequest) {
     await prisma.projectStatusHistory.create({
       data: {
         projectId: project.id,
-        newStatus: 'IN_PROGRESS',
-        changedBy: session.user.id
+        oldStatus: null,
+        newStatus: ProjectStatus.IN_PROGRESS,
+        changedBy: user.id
       }
     })
 

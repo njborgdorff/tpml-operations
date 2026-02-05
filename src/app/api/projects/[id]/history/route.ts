@@ -1,47 +1,56 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { authOptions } from '@/lib/auth'
 
-interface RouteParams {
-  params: {
-    id: string
-  }
-}
-
-export async function GET(request: NextRequest, { params }: RouteParams) {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
+    
+    if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Check if user owns the project
-    const project = await prisma.project.findUnique({
-      where: { id: params.id }
+    // Find the user
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email }
+    })
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
+
+    // Verify project ownership
+    const project = await prisma.project.findFirst({
+      where: {
+        id: params.id,
+        userId: user.id
+      }
     })
 
     if (!project) {
-      return NextResponse.json(
-        { error: 'Project not found' },
-        { status: 404 }
-      )
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    if (project.userId !== session.user.id) {
-      return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      )
-    }
-
+    // Get status history
     const history = await prisma.projectStatusHistory.findMany({
-      where: { projectId: params.id },
-      orderBy: { changedAt: 'desc' },
+      where: {
+        projectId: params.id
+      },
       include: {
         user: {
-          select: { id: true, name: true, email: true }
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
         }
+      },
+      orderBy: {
+        changedAt: 'desc'
       }
     })
 

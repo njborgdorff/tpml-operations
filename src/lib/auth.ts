@@ -1,6 +1,6 @@
 import { NextAuthOptions } from 'next-auth'
-import CredentialsProvider from 'next-auth/providers/credentials'
 import { PrismaAdapter } from '@next-auth/prisma-adapter'
+import CredentialsProvider from 'next-auth/providers/credentials'
 import { prisma } from './prisma'
 
 export const authOptions: NextAuthOptions = {
@@ -13,12 +13,12 @@ export const authOptions: NextAuthOptions = {
         password: { label: 'Password', type: 'password' }
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
+        if (!credentials?.email) {
           return null
         }
 
-        // For TPML demo purposes - in production this would verify against hashed passwords
-        // Create or find user
+        // For development purposes, we'll create/find users automatically
+        // In production, you'd verify against a password hash
         let user = await prisma.user.findUnique({
           where: { email: credentials.email }
         })
@@ -27,8 +27,7 @@ export const authOptions: NextAuthOptions = {
           user = await prisma.user.create({
             data: {
               email: credentials.email,
-              name: credentials.email.split('@')[0], // Use email prefix as name
-              role: 'user'
+              name: credentials.email.split('@')[0]
             }
           })
         }
@@ -36,8 +35,7 @@ export const authOptions: NextAuthOptions = {
         return {
           id: user.id,
           email: user.email,
-          name: user.name,
-          role: user.role
+          name: user.name
         }
       }
     })
@@ -45,22 +43,21 @@ export const authOptions: NextAuthOptions = {
   session: {
     strategy: 'jwt'
   },
+  pages: {
+    signIn: '/auth/signin'
+  },
   callbacks: {
-    jwt: async ({ user, token }) => {
+    async jwt({ token, user }) {
       if (user) {
-        token.role = user.role
+        token.id = user.id
       }
       return token
     },
-    session: async ({ session, token }) => {
-      if (session?.user && token?.sub) {
-        session.user.id = token.sub
-        session.user.role = token.role as string
+    async session({ session, token }) {
+      if (token) {
+        session.user.id = token.id as string
       }
       return session
     }
-  },
-  pages: {
-    signIn: '/auth/signin'
   }
 }

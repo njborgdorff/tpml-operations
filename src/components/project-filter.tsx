@@ -1,43 +1,34 @@
 'use client'
 
-import { ProjectFilter } from '@/lib/types'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './ui/select'
+import { Button } from '@/components/ui/button'
+import { ProjectFilter } from '@/types/project'
 
 interface ProjectFilterProps {
   currentFilter: ProjectFilter
   onFilterChange: (filter: ProjectFilter) => void
 }
 
-export function ProjectFilterSelect({ currentFilter, onFilterChange }: ProjectFilterProps) {
-  const filterOptions: { value: ProjectFilter; label: string }[] = [
-    { value: 'all', label: 'All Projects' },
-    { value: 'active', label: 'Active Projects' },
-    { value: 'finished', label: 'Finished Projects' },
-  ]
-
+export function ProjectFilterComponent({ currentFilter, onFilterChange }: ProjectFilterProps) {
   return (
-    <Select
-      value={currentFilter}
-      onValueChange={(value) => onFilterChange(value as ProjectFilter)}
-    >
-      <SelectTrigger className="w-48">
-        <SelectValue>
-          {filterOptions.find(option => option.value === currentFilter)?.label}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent>
-        {filterOptions.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <div className="flex gap-2 mb-6">
+      <Button
+        variant={currentFilter === 'active' ? 'default' : 'outline'}
+        onClick={() => onFilterChange('active')}
+      >
+        Active Projects
+      </Button>
+      <Button
+        variant={currentFilter === 'finished' ? 'default' : 'outline'}
+        onClick={() => onFilterChange('finished')}
+      >
+        Finished Projects
+      </Button>
+      <Button
+        variant={currentFilter === 'all' ? 'default' : 'outline'}
+        onClick={() => onFilterChange('all')}
+      >
+        All Projects
+      </Button>
+    </div>
   )
 }
