@@ -1,69 +1,91 @@
-import { Project } from '@/lib/types';
-import { formatDate } from '@/lib/utils';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
-import { ProjectStatusBadge } from '@/components/project-status-badge';
-import { ProjectStatusSelect } from '@/components/project-status-select';
+"use client"
 
-interface ProjectCardProps {
-  project: Project;
-  showStatusSelect?: boolean;
+import { ProjectStatus } from "@prisma/client"
+import { ProjectStatusBadge } from "@/components/project-status-badge"
+import { ProjectStatusSelect } from "@/components/project-status-select"
+import { formatDistanceToNow } from "date-fns"
+
+interface Project {
+  id: string
+  name: string
+  description: string | null
+  status: ProjectStatus
+  createdAt: string
+  updatedAt: string
+  archivedAt: string | null
+  user: {
+    id: string
+    name: string | null
+    email: string
+  }
+  statusHistory: Array<{
+    changedAt: string
+    newStatus: ProjectStatus
+    user: {
+      name: string | null
+      email: string
+    }
+  }>
 }
 
-export function ProjectCard({ project, showStatusSelect = true }: ProjectCardProps) {
-  const isFinished = project.status === 'FINISHED';
-  
+interface ProjectCardProps {
+  project: Project
+  onStatusChange?: (projectId: string, newStatus: ProjectStatus) => void
+  showStatusSelect?: boolean
+}
+
+export function ProjectCard({ 
+  project, 
+  onStatusChange, 
+  showStatusSelect = true 
+}: ProjectCardProps) {
+  const isFinished = project.status === ProjectStatus.FINISHED
+  const lastStatusChange = project.statusHistory[0]
+
   return (
-    <Card className={`transition-all hover:shadow-md ${isFinished ? 'opacity-75' : ''}`}>
-      <CardHeader>
-        <div className="flex items-start justify-between">
-          <div className="flex-1 min-w-0">
-            <CardTitle className="text-lg truncate">{project.name}</CardTitle>
-            {project.description && (
-              <CardDescription className="mt-1 line-clamp-2">
-                {project.description}
-              </CardDescription>
-            )}
-          </div>
-          <div className="ml-4 flex-shrink-0">
-            <ProjectStatusBadge status={project.status} />
-          </div>
-        </div>
-      </CardHeader>
-      
-      <CardContent>
-        <div className="space-y-2 text-sm text-muted-foreground">
-          <div>
-            <span className="font-medium">Created:</span> {formatDate(project.createdAt)}
-          </div>
-          <div>
-            <span className="font-medium">Updated:</span> {formatDate(project.updatedAt)}
-          </div>
-          {project.archivedAt && (
-            <div>
-              <span className="font-medium">Archived:</span> {formatDate(project.archivedAt)}
-            </div>
+    <div className="border rounded-lg p-6 bg-white shadow-sm hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex-1">
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">
+            {project.name}
+          </h3>
+          {project.description && (
+            <p className="text-gray-600 text-sm mb-3">
+              {project.description}
+            </p>
           )}
         </div>
-      </CardContent>
-      
-      {showStatusSelect && !isFinished && (
-        <CardFooter>
-          <div className="flex items-center justify-between w-full">
-            <span className="text-sm text-muted-foreground">Status:</span>
-            <ProjectStatusSelect 
-              projectId={project.id} 
+        <div className="ml-4">
+          {showStatusSelect && !isFinished ? (
+            <ProjectStatusSelect
+              projectId={project.id}
               currentStatus={project.status}
+              onStatusChange={(newStatus) => onStatusChange?.(project.id, newStatus)}
             />
+          ) : (
+            <ProjectStatusBadge status={project.status} />
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between text-sm text-gray-500">
+        <div>
+          Created {formatDistanceToNow(new Date(project.createdAt), { addSuffix: true })}
+        </div>
+        {lastStatusChange && (
+          <div>
+            Status changed {formatDistanceToNow(new Date(lastStatusChange.changedAt), { addSuffix: true })}
+            {lastStatusChange.user.name && (
+              <span className="ml-1">by {lastStatusChange.user.name}</span>
+            )}
           </div>
-        </CardFooter>
-      )}
-    </Card>
-  );
+        )}
+        {isFinished && project.archivedAt && (
+          <div>
+            Archived {formatDistanceToNow(new Date(project.archivedAt), { addSuffix: true })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }

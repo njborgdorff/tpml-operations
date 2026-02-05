@@ -1,35 +1,38 @@
-import { Badge } from '@/components/ui/badge';
-import { ProjectStatus } from '@/lib/types';
+"use client"
+
+import { ProjectStatus } from "@prisma/client"
+import { Badge } from "@/components/ui/badge"
 
 interface ProjectStatusBadgeProps {
-  status: ProjectStatus;
+  status: ProjectStatus
+  className?: string
 }
 
-const statusConfig = {
-  IN_PROGRESS: {
-    label: 'In Progress',
-    variant: 'info' as const,
+const statusConfig: Record<ProjectStatus, { label: string; variant: any }> = {
+  IN_PROGRESS: { 
+    label: "In Progress", 
+    variant: "info" 
   },
-  COMPLETE: {
-    label: 'Complete',
-    variant: 'warning' as const,
+  COMPLETE: { 
+    label: "Complete", 
+    variant: "warning" 
   },
-  APPROVED: {
-    label: 'Approved',
-    variant: 'success' as const,
+  APPROVED: { 
+    label: "Approved", 
+    variant: "success" 
   },
-  FINISHED: {
-    label: 'Finished',
-    variant: 'secondary' as const,
-  },
-};
+  FINISHED: { 
+    label: "Finished", 
+    variant: "secondary" 
+  }
+}
 
-export function ProjectStatusBadge({ status }: ProjectStatusBadgeProps) {
-  const config = statusConfig[status];
+export function ProjectStatusBadge({ status, className }: ProjectStatusBadgeProps) {
+  const config = statusConfig[status]
   
   return (
-    <Badge variant={config.variant}>
+    <Badge variant={config.variant} className={className}>
       {config.label}
     </Badge>
-  );
+  )
 }

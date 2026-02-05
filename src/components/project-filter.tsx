@@ -1,33 +1,35 @@
-'use client'
+"use client"
 
-import { Button } from '@/components/ui/button'
-import { ProjectFilter } from '@/types/project'
+import { Button } from "@/components/ui/button"
 
 interface ProjectFilterProps {
-  currentFilter: ProjectFilter
-  onFilterChange: (filter: ProjectFilter) => void
+  currentFilter: "all" | "active" | "finished"
+  onFilterChange: (filter: "all" | "active" | "finished") => void
 }
 
-export function ProjectFilterComponent({ currentFilter, onFilterChange }: ProjectFilterProps) {
+export function ProjectFilter({ currentFilter, onFilterChange }: ProjectFilterProps) {
   return (
-    <div className="flex gap-2 mb-6">
+    <div className="flex gap-2">
       <Button
-        variant={currentFilter === 'active' ? 'default' : 'outline'}
-        onClick={() => onFilterChange('active')}
-      >
-        Active Projects
-      </Button>
-      <Button
-        variant={currentFilter === 'finished' ? 'default' : 'outline'}
-        onClick={() => onFilterChange('finished')}
-      >
-        Finished Projects
-      </Button>
-      <Button
-        variant={currentFilter === 'all' ? 'default' : 'outline'}
-        onClick={() => onFilterChange('all')}
+        variant={currentFilter === "all" ? "default" : "outline"}
+        size="sm"
+        onClick={() => onFilterChange("all")}
       >
         All Projects
+      </Button>
+      <Button
+        variant={currentFilter === "active" ? "default" : "outline"}
+        size="sm"
+        onClick={() => onFilterChange("active")}
+      >
+        Active
+      </Button>
+      <Button
+        variant={currentFilter === "finished" ? "default" : "outline"}
+        size="sm"
+        onClick={() => onFilterChange("finished")}
+      >
+        Finished
       </Button>
     </div>
   )
