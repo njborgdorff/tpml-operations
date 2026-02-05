@@ -307,6 +307,221 @@ Start implementing now. Use the tools to create real files.`;
 }
 
 /**
+ * Validation result for code analysis
+ */
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  fixes?: FileOperation[];
+}
+
+/**
+ * Validate generated code for common build errors before committing.
+ * Uses Claude to analyze for TypeScript errors, routing conflicts, missing imports, etc.
+ */
+export async function validateGeneratedCode(
+  operations: FileOperation[],
+  existingFilesList?: string[]
+): Promise<ValidationResult> {
+  const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+
+  // Build a summary of the files being created/modified
+  const filesSummary = operations.map(op => {
+    const preview = op.content?.substring(0, 2000) || '';
+    return `### ${op.type.toUpperCase()}: ${op.path}\n\`\`\`\n${preview}${(op.content?.length || 0) > 2000 ? '\n... (truncated)' : ''}\n\`\`\``;
+  }).join('\n\n');
+
+  const existingFilesContext = existingFilesList?.length
+    ? `\n\nExisting files in the project:\n${existingFilesList.slice(0, 50).map(f => `- ${f}`).join('\n')}`
+    : '';
+
+  const prompt = `You are a build validator. Analyze the following file operations for a Next.js 14 project with TypeScript.
+
+## Files to validate:
+
+${filesSummary}
+${existingFilesContext}
+
+## Check for these common errors:
+
+1. **Next.js Routing Conflicts**: Multiple dynamic routes at the same level (e.g., [id] and [slug] in the same directory)
+2. **Missing Imports**: Components or functions used but not imported
+3. **TypeScript Errors**: Type mismatches, missing type annotations for exports
+4. **Syntax Errors**: Malformed JSX, unclosed brackets, invalid JavaScript
+5. **Missing Dependencies**: Using packages that aren't typically in a Next.js project
+6. **Invalid File Paths**: Files in wrong directories for Next.js conventions
+
+## Response Format:
+
+Respond with a JSON object (no markdown, just raw JSON):
+{
+  "valid": true/false,
+  "errors": ["critical error 1", "critical error 2"],
+  "warnings": ["warning 1", "warning 2"]
+}
+
+- "errors" = issues that WILL cause build failure
+- "warnings" = potential issues or best practice violations
+- Set "valid" to false if there are any errors`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const textContent = response.content.find(
+      (block): block is Anthropic.TextBlock => block.type === 'text'
+    );
+
+    if (!textContent) {
+      return { valid: true, errors: [], warnings: ['Could not parse validation response'] };
+    }
+
+    // Try to parse JSON response
+    const text = textContent.text.trim();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const result = JSON.parse(jsonMatch[0]);
+      return {
+        valid: result.valid ?? true,
+        errors: result.errors || [],
+        warnings: result.warnings || [],
+      };
+    }
+
+    return { valid: true, errors: [], warnings: ['Could not parse validation response'] };
+  } catch (error) {
+    console.error('[Validation] Error during code validation:', error);
+    // Don't block on validation errors - return valid with a warning
+    return {
+      valid: true,
+      errors: [],
+      warnings: [`Validation check failed: ${error instanceof Error ? error.message : 'Unknown error'}`],
+    };
+  }
+}
+
+/**
+ * Deployment status result from GitHub
+ */
+export interface DeploymentStatus {
+  hasDeployments: boolean;
+  latestStatus?: 'pending' | 'success' | 'failure' | 'error' | 'in_progress' | 'queued';
+  deploymentUrl?: string;
+  environment?: string;
+  description?: string;
+}
+
+/**
+ * Check GitHub deployment status for a commit.
+ * This queries the GitHub Deployments API to see if Vercel (or other CI) has created deployments.
+ */
+export async function getDeploymentStatus(
+  repo: string,
+  commitSha: string
+): Promise<DeploymentStatus> {
+  const githubToken = process.env.GITHUB_TOKEN;
+  if (!githubToken) {
+    return { hasDeployments: false };
+  }
+
+  try {
+    // Get deployments for this repo
+    const deploymentsResponse = await fetch(
+      `https://api.github.com/repos/${repo}/deployments?sha=${commitSha}`,
+      {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    if (!deploymentsResponse.ok) {
+      console.log(`[Deployment] Failed to fetch deployments: ${deploymentsResponse.status}`);
+      return { hasDeployments: false };
+    }
+
+    const deployments = await deploymentsResponse.json();
+
+    if (!deployments || deployments.length === 0) {
+      return { hasDeployments: false };
+    }
+
+    // Get the latest deployment
+    const latestDeployment = deployments[0];
+
+    // Get statuses for this deployment
+    const statusesResponse = await fetch(
+      `https://api.github.com/repos/${repo}/deployments/${latestDeployment.id}/statuses`,
+      {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    if (!statusesResponse.ok) {
+      return {
+        hasDeployments: true,
+        environment: latestDeployment.environment,
+        latestStatus: 'pending',
+      };
+    }
+
+    const statuses = await statusesResponse.json();
+    const latestStatusObj = statuses[0];
+
+    return {
+      hasDeployments: true,
+      latestStatus: latestStatusObj?.state || 'pending',
+      deploymentUrl: latestStatusObj?.target_url || latestStatusObj?.environment_url,
+      environment: latestDeployment.environment,
+      description: latestStatusObj?.description,
+    };
+  } catch (error) {
+    console.error('[Deployment] Error checking deployment status:', error);
+    return { hasDeployments: false };
+  }
+}
+
+/**
+ * Wait for deployment and return final status.
+ * Polls GitHub every 10 seconds for up to maxWaitMs.
+ */
+export async function waitForDeployment(
+  repo: string,
+  commitSha: string,
+  maxWaitMs: number = 120000 // 2 minutes default
+): Promise<DeploymentStatus> {
+  const startTime = Date.now();
+  const pollInterval = 10000; // 10 seconds
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const status = await getDeploymentStatus(repo, commitSha);
+
+    // If we have a final status, return it
+    if (status.hasDeployments &&
+        status.latestStatus &&
+        !['pending', 'in_progress', 'queued'].includes(status.latestStatus)) {
+      return status;
+    }
+
+    // Wait before polling again
+    await new Promise(resolve => setTimeout(resolve, pollInterval));
+  }
+
+  // Return whatever status we have after timeout
+  return getDeploymentStatus(repo, commitSha);
+}
+
+/**
  * Apply file operations via GitHub API
  */
 export async function applyOperationsViaGitHub(

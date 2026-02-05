@@ -12,7 +12,7 @@ import { serve } from 'inngest/next';
 import { Inngest } from 'inngest';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaClient } from '@prisma/client';
-import { runImplementation, applyOperationsViaGitHub, FileOperation } from '@/lib/implementation/file-tools';
+import { runImplementation, applyOperationsViaGitHub, validateGeneratedCode, getDeploymentStatus, FileOperation, ValidationResult } from '@/lib/implementation/file-tools';
 
 // Note: Implementation now uses Claude tool_use to generate actual file operations
 // These can be applied via GitHub API (serverless) or local worker
@@ -2148,9 +2148,12 @@ Keep your response focused on architecture validation. Be concise but thorough.`
     let allFilesModified: string[] = []; // Track all files across iterations
     const allOperations: FileOperation[] = []; // Track all file operations with content across iterations
 
+    console.log(`[Workflow] Starting implementation loop for ${projectName}, Sprint ${sprintNumber}`);
+
     while (!workflowComplete && iteration < MAX_ITERATIONS) {
       iteration++;
       const iterSuffix = iteration > 1 ? `-iter${iteration}` : '';
+      console.log(`[Workflow] Starting iteration ${iteration} for ${projectName}`);
 
       // Announce implementation starting
       await step.run(`implementer-starting${iterSuffix}`, async () => {
@@ -2240,6 +2243,45 @@ Keep your response focused on architecture validation. Be concise but thorough.`
       targetRepo = targetRepo || githubRepo;
 
       let commitResult: { success: boolean; commitSha?: string; error?: string } = { success: false };
+      let validationResult: ValidationResult = { valid: true, errors: [], warnings: [] };
+
+      // Validate code before committing
+      if (implementationResult.operations && implementationResult.operations.length > 0) {
+        validationResult = await step.run(`validate-code${iterSuffix}`, async () => {
+          console.log(`[Validation] Validating ${implementationResult.operations.length} file operations`);
+          return validateGeneratedCode(implementationResult.operations);
+        });
+
+        // Post validation results
+        if (!validationResult.valid || validationResult.warnings.length > 0) {
+          await step.run(`post-validation-result${iterSuffix}`, async () => {
+            const errorList = validationResult.errors.length > 0
+              ? `\n\n*Errors:*\n${validationResult.errors.map(e => `• ${e}`).join('\n')}`
+              : '';
+            const warningList = validationResult.warnings.length > 0
+              ? `\n\n*Warnings:*\n${validationResult.warnings.map(w => `• ${w}`).join('\n')}`
+              : '';
+
+            return postAsRole('Implementer', channel, 'Code validation results', [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: validationResult.valid
+                    ? `⚠️ *Code Validation: Passed with Warnings*${warningList}`
+                    : `❌ *Code Validation: Failed*\n\nBuild errors detected. Code will not be committed until fixed.${errorList}${warningList}`,
+                },
+              },
+            ], kickoffMessage?.ts);
+          });
+        }
+
+        // If validation failed, add errors to feedback and continue to next iteration
+        if (!validationResult.valid) {
+          currentImplementation = `## BUILD VALIDATION FAILED\n\nThe following errors must be fixed before the code can be committed:\n\n${validationResult.errors.map(e => `- ${e}`).join('\n')}\n\n## Previous Implementation Summary:\n${implementationResult.output}`;
+          continue; // Skip commit and go to next iteration for fixes
+        }
+      }
 
       if (implementationResult.operations && implementationResult.operations.length > 0 && targetRepo) {
         commitResult = await step.run(`commit-to-github${iterSuffix}`, async () => {
@@ -2259,16 +2301,36 @@ ${implementationResult.operations.map((op: FileOperation) => `- ${op.type}: ${op
           );
         });
 
-        // Post commit result
+        // Post commit result with prominent branch/repo info
+        const branchName = `sprint-${sprintNumber}-implementation`;
+        const commitUrl = `https://github.com/${targetRepo}/commit/${commitResult.commitSha}`;
+        const branchUrl = `https://github.com/${targetRepo}/tree/${branchName}`;
+
         await step.run(`post-commit-result${iterSuffix}`, async () => {
           if (commitResult.success) {
             return postAsRole('Implementer', channel, 'Code committed to GitHub', [
               {
-                type: 'section',
+                type: 'header',
                 text: {
-                  type: 'mrkdwn',
-                  text: `✅ *Code Committed to GitHub*\n\nCommit: \`${commitResult.commitSha?.substring(0, 7)}\`\nBranch: \`sprint-${sprintNumber}-implementation\`\nFiles: ${implementationResult.operations.length}`,
+                  type: 'plain_text',
+                  text: '✅ Code Committed to GitHub',
+                  emoji: true,
                 },
+              },
+              {
+                type: 'section',
+                fields: [
+                  { type: 'mrkdwn', text: `*Repository:*\n<https://github.com/${targetRepo}|${targetRepo}>` },
+                  { type: 'mrkdwn', text: `*Branch:*\n<${branchUrl}|\`${branchName}\`>` },
+                  { type: 'mrkdwn', text: `*Commit:*\n<${commitUrl}|\`${commitResult.commitSha?.substring(0, 7)}\`>` },
+                  { type: 'mrkdwn', text: `*Files Changed:*\n${implementationResult.operations.length} files` },
+                ],
+              },
+              {
+                type: 'context',
+                elements: [
+                  { type: 'mrkdwn', text: `_Iteration ${iteration} | Sprint ${sprintNumber}_` },
+                ],
               },
             ], kickoffMessage?.ts);
           } else {
@@ -2277,12 +2339,42 @@ ${implementationResult.operations.map((op: FileOperation) => `- ${op.type}: ${op
                 type: 'section',
                 text: {
                   type: 'mrkdwn',
-                  text: `⚠️ *GitHub Commit Failed*\n\nError: ${commitResult.error}\n\nCode was generated but not committed. File operations stored in artifacts.`,
+                  text: `⚠️ *GitHub Commit Failed*\n\n*Target:* \`${targetRepo}\` → \`${branchName}\`\n*Error:* ${commitResult.error}\n\nCode was generated but not committed. File operations stored in artifacts.`,
                 },
               },
             ], kickoffMessage?.ts);
           }
         });
+
+        // Check deployment status after commit (give Vercel a moment to start)
+        if (commitResult.success && commitResult.commitSha) {
+          await step.run(`check-deployment-status${iterSuffix}`, async () => {
+            // Wait 15 seconds for Vercel to create the deployment
+            await new Promise(resolve => setTimeout(resolve, 15000));
+
+            const deployStatus = await getDeploymentStatus(targetRepo, commitResult.commitSha!);
+
+            if (deployStatus.hasDeployments) {
+              const statusEmoji = deployStatus.latestStatus === 'success' ? '✅' :
+                                  deployStatus.latestStatus === 'failure' || deployStatus.latestStatus === 'error' ? '❌' :
+                                  '🔄';
+              const statusText = deployStatus.latestStatus === 'success' ? 'Deployed Successfully' :
+                                 deployStatus.latestStatus === 'failure' || deployStatus.latestStatus === 'error' ? 'Deployment Failed' :
+                                 'Deployment In Progress';
+
+              return postAsRole('DevOps', channel, 'Deployment status update', [
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: `${statusEmoji} *${statusText}*\n\n*Environment:* ${deployStatus.environment || 'Preview'}${deployStatus.deploymentUrl ? `\n*Preview URL:* <${deployStatus.deploymentUrl}|View Deployment>` : ''}${deployStatus.description ? `\n*Status:* ${deployStatus.description}` : ''}`,
+                  },
+                },
+              ], kickoffMessage?.ts);
+            }
+            return { checked: true, noDeployments: true };
+          });
+        }
       }
 
       // Post implementation progress
@@ -2579,8 +2671,33 @@ DO NOT start a new implementation. EDIT the existing files to fix the issues.`;
           }
         }
 
-        // Commit fix to GitHub if we have operations
-        if (fixResult.operations && fixResult.operations.length > 0 && targetRepo) {
+        // Validate fixes before committing
+        let fixValidation: ValidationResult = { valid: true, errors: [], warnings: [] };
+        if (fixResult.operations && fixResult.operations.length > 0) {
+          fixValidation = await step.run(`validate-fix${iterSuffix}`, async () => {
+            console.log(`[Validation] Validating ${fixResult.operations.length} fix operations`);
+            return validateGeneratedCode(fixResult.operations);
+          });
+
+          if (!fixValidation.valid) {
+            await step.run(`post-fix-validation-failed${iterSuffix}`, async () => {
+              return postAsRole('Implementer', channel, 'Fix validation failed', [
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: `❌ *Fix Validation Failed*\n\nThe fixes have build errors:\n${fixValidation.errors.map(e => `• ${e}`).join('\n')}\n\nWill retry in next iteration.`,
+                  },
+                },
+              ], kickoffMessage?.ts);
+            });
+            // Continue to next iteration - the validation errors will be addressed
+            continue;
+          }
+        }
+
+        // Commit fix to GitHub if we have valid operations
+        if (fixResult.operations && fixResult.operations.length > 0 && targetRepo && fixValidation.valid) {
           const fixCommitResult = await step.run(`commit-fix-to-github${iterSuffix}`, async () => {
             const branchName = `sprint-${sprintNumber}-implementation`;
             const commitMessage = `[Sprint ${sprintNumber}] Fix reviewer feedback - Iteration ${iteration}
@@ -2599,15 +2716,35 @@ ${fixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`).jo
             );
           });
 
+          const fixBranchName = `sprint-${sprintNumber}-implementation`;
+          const fixCommitUrl = `https://github.com/${targetRepo}/commit/${fixCommitResult.commitSha}`;
+          const fixBranchUrl = `https://github.com/${targetRepo}/tree/${fixBranchName}`;
+
           await step.run(`post-fix-commit-result${iterSuffix}`, async () => {
             if (fixCommitResult.success) {
               return postAsRole('Implementer', channel, 'Fix committed to GitHub', [
                 {
-                  type: 'section',
+                  type: 'header',
                   text: {
-                    type: 'mrkdwn',
-                    text: `✅ *Fixes Committed to GitHub*\n\nCommit: \`${fixCommitResult.commitSha?.substring(0, 7)}\`\nFiles fixed: ${fixResult.operations.length}`,
+                    type: 'plain_text',
+                    text: '✅ Fixes Committed to GitHub',
+                    emoji: true,
                   },
+                },
+                {
+                  type: 'section',
+                  fields: [
+                    { type: 'mrkdwn', text: `*Repository:*\n<https://github.com/${targetRepo}|${targetRepo}>` },
+                    { type: 'mrkdwn', text: `*Branch:*\n<${fixBranchUrl}|\`${fixBranchName}\`>` },
+                    { type: 'mrkdwn', text: `*Commit:*\n<${fixCommitUrl}|\`${fixCommitResult.commitSha?.substring(0, 7)}\`>` },
+                    { type: 'mrkdwn', text: `*Files Fixed:*\n${fixResult.operations.length} files` },
+                  ],
+                },
+                {
+                  type: 'context',
+                  elements: [
+                    { type: 'mrkdwn', text: `_Reviewer Fix | Iteration ${iteration}_` },
+                  ],
                 },
               ], kickoffMessage?.ts);
             } else {
@@ -2616,12 +2753,34 @@ ${fixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`).jo
                   type: 'section',
                   text: {
                     type: 'mrkdwn',
-                    text: `⚠️ *GitHub Commit Failed*\n\nError: ${fixCommitResult.error}`,
+                    text: `⚠️ *GitHub Commit Failed*\n\n*Target:* \`${targetRepo}\` → \`${fixBranchName}\`\n*Error:* ${fixCommitResult.error}`,
                   },
                 },
               ], kickoffMessage?.ts);
             }
           });
+
+          // Check deployment status for fix
+          if (fixCommitResult.success && fixCommitResult.commitSha) {
+            await step.run(`check-fix-deployment-status${iterSuffix}`, async () => {
+              await new Promise(resolve => setTimeout(resolve, 15000));
+              const deployStatus = await getDeploymentStatus(targetRepo, fixCommitResult.commitSha!);
+              if (deployStatus.hasDeployments) {
+                const statusEmoji = deployStatus.latestStatus === 'success' ? '✅' :
+                                    deployStatus.latestStatus === 'failure' || deployStatus.latestStatus === 'error' ? '❌' : '🔄';
+                return postAsRole('DevOps', channel, 'Deployment status', [
+                  {
+                    type: 'section',
+                    text: {
+                      type: 'mrkdwn',
+                      text: `${statusEmoji} *Deployment:* ${deployStatus.latestStatus}${deployStatus.deploymentUrl ? ` | <${deployStatus.deploymentUrl}|View>` : ''}`,
+                    },
+                  },
+                ], kickoffMessage?.ts);
+              }
+              return { checked: true };
+            });
+          }
 
           allFilesModified = Array.from(new Set([...allFilesModified, ...fixResult.filesModified]));
         }
@@ -2902,8 +3061,33 @@ DO NOT start a new implementation. EDIT the existing files to fix the bugs.`;
           }
         }
 
-        // Commit bugfix to GitHub if we have operations
-        if (bugfixResult.operations && bugfixResult.operations.length > 0 && targetRepo) {
+        // Validate bugfixes before committing
+        let bugfixValidation: ValidationResult = { valid: true, errors: [], warnings: [] };
+        if (bugfixResult.operations && bugfixResult.operations.length > 0) {
+          bugfixValidation = await step.run(`validate-bugfix${iterSuffix}`, async () => {
+            console.log(`[Validation] Validating ${bugfixResult.operations.length} bugfix operations`);
+            return validateGeneratedCode(bugfixResult.operations);
+          });
+
+          if (!bugfixValidation.valid) {
+            await step.run(`post-bugfix-validation-failed${iterSuffix}`, async () => {
+              return postAsRole('Implementer', channel, 'Bugfix validation failed', [
+                {
+                  type: 'section',
+                  text: {
+                    type: 'mrkdwn',
+                    text: `❌ *Bugfix Validation Failed*\n\nThe bugfixes have build errors:\n${bugfixValidation.errors.map(e => `• ${e}`).join('\n')}\n\nWill retry in next iteration.`,
+                  },
+                },
+              ], kickoffMessage?.ts);
+            });
+            // Continue to next iteration - the validation errors will be addressed
+            continue;
+          }
+        }
+
+        // Commit bugfix to GitHub if we have valid operations
+        if (bugfixResult.operations && bugfixResult.operations.length > 0 && targetRepo && bugfixValidation.valid) {
           const bugfixCommitResult = await step.run(`commit-bugfix-to-github${iterSuffix}`, async () => {
             const branchName = `sprint-${sprintNumber}-implementation`;
             const commitMessage = `[Sprint ${sprintNumber}] Fix QA bugs - Iteration ${iteration}
@@ -2922,15 +3106,35 @@ ${bugfixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`)
             );
           });
 
+          const bugfixBranchName = `sprint-${sprintNumber}-implementation`;
+          const bugfixCommitUrl = `https://github.com/${targetRepo}/commit/${bugfixCommitResult.commitSha}`;
+          const bugfixBranchUrl = `https://github.com/${targetRepo}/tree/${bugfixBranchName}`;
+
           await step.run(`post-bugfix-commit-result${iterSuffix}`, async () => {
             if (bugfixCommitResult.success) {
               return postAsRole('Implementer', channel, 'Bugfix committed to GitHub', [
                 {
-                  type: 'section',
+                  type: 'header',
                   text: {
-                    type: 'mrkdwn',
-                    text: `✅ *Bugfixes Committed to GitHub*\n\nCommit: \`${bugfixCommitResult.commitSha?.substring(0, 7)}\`\nFiles fixed: ${bugfixResult.operations.length}`,
+                    type: 'plain_text',
+                    text: '✅ Bugfixes Committed to GitHub',
+                    emoji: true,
                   },
+                },
+                {
+                  type: 'section',
+                  fields: [
+                    { type: 'mrkdwn', text: `*Repository:*\n<https://github.com/${targetRepo}|${targetRepo}>` },
+                    { type: 'mrkdwn', text: `*Branch:*\n<${bugfixBranchUrl}|\`${bugfixBranchName}\`>` },
+                    { type: 'mrkdwn', text: `*Commit:*\n<${bugfixCommitUrl}|\`${bugfixCommitResult.commitSha?.substring(0, 7)}\`>` },
+                    { type: 'mrkdwn', text: `*Files Fixed:*\n${bugfixResult.operations.length} files` },
+                  ],
+                },
+                {
+                  type: 'context',
+                  elements: [
+                    { type: 'mrkdwn', text: `_QA Bugfix | Iteration ${iteration}_` },
+                  ],
                 },
               ], kickoffMessage?.ts);
             } else {
@@ -2939,12 +3143,34 @@ ${bugfixResult.operations.map((op: FileOperation) => `- ${op.type}: ${op.path}`)
                   type: 'section',
                   text: {
                     type: 'mrkdwn',
-                    text: `⚠️ *GitHub Commit Failed*\n\nError: ${bugfixCommitResult.error}`,
+                    text: `⚠️ *GitHub Commit Failed*\n\n*Target:* \`${targetRepo}\` → \`${bugfixBranchName}\`\n*Error:* ${bugfixCommitResult.error}`,
                   },
                 },
               ], kickoffMessage?.ts);
             }
           });
+
+          // Check deployment status for bugfix
+          if (bugfixCommitResult.success && bugfixCommitResult.commitSha) {
+            await step.run(`check-bugfix-deployment-status${iterSuffix}`, async () => {
+              await new Promise(resolve => setTimeout(resolve, 15000));
+              const deployStatus = await getDeploymentStatus(targetRepo, bugfixCommitResult.commitSha!);
+              if (deployStatus.hasDeployments) {
+                const statusEmoji = deployStatus.latestStatus === 'success' ? '✅' :
+                                    deployStatus.latestStatus === 'failure' || deployStatus.latestStatus === 'error' ? '❌' : '🔄';
+                return postAsRole('DevOps', channel, 'Deployment status', [
+                  {
+                    type: 'section',
+                    text: {
+                      type: 'mrkdwn',
+                      text: `${statusEmoji} *Deployment:* ${deployStatus.latestStatus}${deployStatus.deploymentUrl ? ` | <${deployStatus.deploymentUrl}|View>` : ''}`,
+                    },
+                  },
+                ], kickoffMessage?.ts);
+              }
+              return { checked: true };
+            });
+          }
 
           allFilesModified = Array.from(new Set([...allFilesModified, ...bugfixResult.filesModified]));
         }
@@ -3041,6 +3267,7 @@ Keep your response focused on deployment preparation. Be concise but thorough.`;
 
       // Workflow complete - request human approval
       workflowComplete = true;
+      console.log(`[Workflow] Workflow COMPLETE for ${projectName}, Sprint ${sprintNumber} after ${iteration} iteration(s)`);
 
       await step.run(`request-human-approval${iterSuffix}`, async () => {
         return postAsRole('PM', channel, 'Sprint ready for human approval', [
@@ -3090,49 +3317,65 @@ Keep your response focused on deployment preparation. Be concise but thorough.`;
     }
 
     // Complete current sprint and set next sprint to AWAITING_APPROVAL
+    console.log(`[Workflow] Starting completion step for project ${projectName}, sprint ${sprintNumber}`);
+
     const nextSprintInfo = await step.run('complete-sprint-setup-next', async () => {
-      // Find and complete current sprint
-      const currentSprint = await prisma.sprint.findFirst({
-        where: { projectId, number: sprintNumber },
-      });
-
-      if (currentSprint) {
-        await prisma.sprint.update({
-          where: { id: currentSprint.id },
-          data: {
-            status: 'COMPLETED',
-            completedAt: new Date(),
-          },
-        });
-      }
-
-      // Find next sprint and set to AWAITING_APPROVAL
-      const nextSprint = await prisma.sprint.findFirst({
-        where: { projectId, number: sprintNumber + 1 },
-      });
-
-      if (nextSprint) {
-        await prisma.sprint.update({
-          where: { id: nextSprint.id },
-          data: { status: 'AWAITING_APPROVAL' },
+      try {
+        // Find and complete current sprint
+        console.log(`[Workflow] Finding sprint ${sprintNumber} for project ${projectId}`);
+        const currentSprint = await prisma.sprint.findFirst({
+          where: { projectId, number: sprintNumber },
         });
 
-        return {
-          hasNext: true,
-          nextSprintId: nextSprint.id,
-          nextSprintNumber: nextSprint.number,
-          nextSprintName: nextSprint.name,
-          nextSprintGoal: nextSprint.goal,
-        };
+        if (currentSprint) {
+          console.log(`[Workflow] Marking sprint ${currentSprint.id} as COMPLETED`);
+          await prisma.sprint.update({
+            where: { id: currentSprint.id },
+            data: {
+              status: 'COMPLETED',
+              completedAt: new Date(),
+            },
+          });
+          console.log(`[Workflow] Sprint ${sprintNumber} marked COMPLETED successfully`);
+        } else {
+          console.error(`[Workflow] ERROR: Could not find sprint ${sprintNumber} for project ${projectId}`);
+        }
+
+        // Find next sprint and set to AWAITING_APPROVAL
+        const nextSprint = await prisma.sprint.findFirst({
+          where: { projectId, number: sprintNumber + 1 },
+        });
+
+        if (nextSprint) {
+          console.log(`[Workflow] Found next sprint ${nextSprint.number}, marking as AWAITING_APPROVAL`);
+          await prisma.sprint.update({
+            where: { id: nextSprint.id },
+            data: { status: 'AWAITING_APPROVAL' },
+          });
+
+          return {
+            hasNext: true,
+            nextSprintId: nextSprint.id,
+            nextSprintNumber: nextSprint.number,
+            nextSprintName: nextSprint.name,
+            nextSprintGoal: nextSprint.goal,
+          };
+        }
+
+        // No more sprints - mark project complete
+        console.log(`[Workflow] No more sprints - marking project ${projectId} as COMPLETED`);
+        await prisma.project.update({
+          where: { id: projectId },
+          data: { status: 'COMPLETED' },
+        });
+        console.log(`[Workflow] Project ${projectName} marked COMPLETED successfully`);
+
+        return { hasNext: false };
+      } catch (error) {
+        console.error(`[Workflow] ERROR in complete-sprint-setup-next:`, error);
+        // Re-throw to let Inngest handle the error
+        throw error;
       }
-
-      // No more sprints - mark project complete
-      await prisma.project.update({
-        where: { id: projectId },
-        data: { status: 'COMPLETED' },
-      });
-
-      return { hasNext: false };
     });
 
     // PM announces sprint completion with next steps
