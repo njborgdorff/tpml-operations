@@ -1,48 +1,37 @@
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-import { ProjectStatus } from "./types"
+import { ProjectStatus } from "@prisma/client"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatProjectStatus(status: ProjectStatus): string {
+export function getStatusVariant(status: ProjectStatus): "default" | "secondary" | "destructive" | "outline" {
   switch (status) {
-    case ProjectStatus.IN_PROGRESS:
-      return 'In Progress'
-    case ProjectStatus.COMPLETE:
-      return 'Complete'
-    case ProjectStatus.APPROVED:
-      return 'Approved'
-    case ProjectStatus.FINISHED:
-      return 'Finished'
+    case "IN_PROGRESS":
+      return "default"
+    case "COMPLETE":
+      return "secondary"
+    case "APPROVED":
+      return "outline"
+    case "ARCHIVED":
+      return "destructive"
+    default:
+      return "default"
+  }
+}
+
+export function getStatusLabel(status: ProjectStatus): string {
+  switch (status) {
+    case "IN_PROGRESS":
+      return "In Progress"
+    case "COMPLETE":
+      return "Complete"
+    case "APPROVED":
+      return "Approved"
+    case "ARCHIVED":
+      return "Archived"
     default:
       return status
   }
-}
-
-export function getStatusVariant(status: ProjectStatus) {
-  switch (status) {
-    case ProjectStatus.IN_PROGRESS:
-      return 'info'
-    case ProjectStatus.COMPLETE:
-      return 'warning'
-    case ProjectStatus.APPROVED:
-      return 'success'
-    case ProjectStatus.FINISHED:
-      return 'secondary'
-    default:
-      return 'default'
-  }
-}
-
-export function formatDate(date: string | Date): string {
-  const d = typeof date === 'string' ? new Date(date) : date
-  return d.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
 }

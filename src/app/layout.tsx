@@ -1,15 +1,14 @@
-import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
-import './globals.css'
-import { Providers } from './providers'
+import type { Metadata } from "next"
+import { Inter } from "next/font/google"
+import { QueryProvider } from "@/components/providers/QueryProvider"
+import { ToastProvider } from "@/components/providers/ToastProvider"
+import "./globals.css"
 
-const inter = Inter({ subsets: ['latin'] })
+const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: 'Finished Project Management',
-  description: 'Manage and archive your completed projects',
+  title: "Finished Project Management",
+  description: "Manage your projects and track their progress",
 }
 
 export default function RootLayout({
@@ -18,13 +17,12 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className="h-full">
-      <body className={`${inter.className} h-full`}>
-        <Providers>
-          <main className="min-h-full bg-background">
-            {children}
-          </main>
-        </Providers>
+    <html lang="en">
+      <body className={inter.className}>
+        <QueryProvider>
+          {children}
+          <ToastProvider />
+        </QueryProvider>
       </body>
     </html>
   )

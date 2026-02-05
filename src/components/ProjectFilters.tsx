@@ -1,111 +1,91 @@
-'use client'
+"use client"
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Button } from '@/components/ui/button'
-import { ProjectStatus, ProjectFilters as ProjectFiltersType } from '@/lib/types'
-import { formatProjectStatus } from '@/lib/utils'
+import { ProjectStatus } from "@prisma/client"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { getStatusLabel, getStatusVariant } from "@/lib/utils"
 
 interface ProjectFiltersProps {
-  filters: ProjectFiltersType
-  onFiltersChange: (filters: ProjectFiltersType) => void
+  activeView: "all" | "active" | "finished"
+  onViewChange: (view: "all" | "active" | "finished") => void
+  statusFilter: ProjectStatus | "all"
+  onStatusFilterChange: (status: ProjectStatus | "all") => void
+  projectCounts: {
+    all: number
+    active: number
+    finished: number
+    inProgress: number
+    complete: number
+    approved: number
+    archived: number
+  }
 }
 
-const FILTER_OPTIONS = [
-  { value: 'active', label: 'Active Projects', description: 'In Progress & Complete' },
-  { value: 'in_progress', label: 'In Progress', description: 'Currently being worked on' },
-  { value: 'complete', label: 'Complete', description: 'Ready for approval' },
-  { value: 'approved', label: 'Approved', description: 'Ready to finish' },
-  { value: 'finished', label: 'Finished', description: 'Archived projects' },
-  { value: 'all', label: 'All Projects', description: 'Everything' }
-]
+export function ProjectFilters({ 
+  activeView, 
+  onViewChange, 
+  statusFilter, 
+  onStatusFilterChange,
+  projectCounts 
+}: ProjectFiltersProps) {
+  const viewButtons = [
+    { key: "all" as const, label: "All Projects", count: projectCounts.all },
+    { key: "active" as const, label: "Active", count: projectCounts.active },
+    { key: "finished" as const, label: "Finished", count: projectCounts.finished },
+  ]
 
-export function ProjectFilters({ filters, onFiltersChange }: ProjectFiltersProps) {
-  const getCurrentFilterValue = () => {
-    if (filters.showFinished) return 'finished'
-    if (!filters.status || filters.status.length === 0) return 'active'
-    if (filters.status.length === 1) {
-      return filters.status[0].toLowerCase()
-    }
-    if (filters.status.length === 2 && 
-        filters.status.includes(ProjectStatus.IN_PROGRESS) && 
-        filters.status.includes(ProjectStatus.COMPLETE)) {
-      return 'active'
-    }
-    return 'all'
-  }
-
-  const handleFilterChange = (value: string) => {
-    switch (value) {
-      case 'active':
-        onFiltersChange({
-          status: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE],
-          showFinished: false
-        })
-        break
-      case 'in_progress':
-        onFiltersChange({
-          status: [ProjectStatus.IN_PROGRESS],
-          showFinished: false
-        })
-        break
-      case 'complete':
-        onFiltersChange({
-          status: [ProjectStatus.COMPLETE],
-          showFinished: false
-        })
-        break
-      case 'approved':
-        onFiltersChange({
-          status: [ProjectStatus.APPROVED],
-          showFinished: false
-        })
-        break
-      case 'finished':
-        onFiltersChange({
-          status: [ProjectStatus.FINISHED],
-          showFinished: true
-        })
-        break
-      case 'all':
-        onFiltersChange({
-          status: undefined,
-          showFinished: true
-        })
-        break
-    }
-  }
-
-  const clearFilters = () => {
-    onFiltersChange({
-      status: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE],
-      showFinished: false
-    })
-  }
+  const statusOptions = [
+    { key: "all" as const, label: "All Statuses", count: projectCounts.all },
+    { key: ProjectStatus.IN_PROGRESS, label: getStatusLabel(ProjectStatus.IN_PROGRESS), count: projectCounts.inProgress },
+    { key: ProjectStatus.COMPLETE, label: getStatusLabel(ProjectStatus.COMPLETE), count: projectCounts.complete },
+    { key: ProjectStatus.APPROVED, label: getStatusLabel(ProjectStatus.APPROVED), count: projectCounts.approved },
+    { key: ProjectStatus.ARCHIVED, label: getStatusLabel(ProjectStatus.ARCHIVED), count: projectCounts.archived },
+  ]
 
   return (
-    <div className="flex items-center gap-4">
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-muted-foreground">Filter:</span>
-        <Select value={getCurrentFilterValue()} onValueChange={handleFilterChange}>
-          <SelectTrigger className="w-48">
-            <SelectValue placeholder="Select filter" />
-          </SelectTrigger>
-          <SelectContent>
-            {FILTER_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                <div className="flex flex-col">
-                  <span>{option.label}</span>
-                  <span className="text-xs text-muted-foreground">{option.description}</span>
-                </div>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+    <div className="space-y-6 mb-8">
+      {/* View Filter */}
+      <div>
+        <h3 className="text-sm font-medium text-gray-700 mb-3">View</h3>
+        <div className="flex flex-wrap gap-2">
+          {viewButtons.map(({ key, label, count }) => (
+            <Button
+              key={key}
+              variant={activeView === key ? "default" : "outline"}
+              onClick={() => onViewChange(key)}
+              className="h-9"
+            >
+              {label} ({count})
+            </Button>
+          ))}
+        </div>
       </div>
-      
-      <Button variant="outline" size="sm" onClick={clearFilters}>
-        Clear Filters
-      </Button>
+
+      {/* Status Filter */}
+      <div>
+        <h3 className="text-sm font-medium text-gray-700 mb-3">Status</h3>
+        <div className="flex flex-wrap gap-2">
+          {statusOptions.map(({ key, label, count }) => {
+            const isActive = statusFilter === key
+            const variant = key === "all" 
+              ? (isActive ? "default" : "outline")
+              : getStatusVariant(key as ProjectStatus)
+            
+            return (
+              <Badge
+                key={key}
+                variant={isActive ? variant : "outline"}
+                className={`cursor-pointer hover:opacity-80 transition-opacity ${
+                  isActive ? "" : "hover:bg-gray-100"
+                }`}
+                onClick={() => onStatusFilterChange(key)}
+              >
+                {label} ({count})
+              </Badge>
+            )
+          })}
+        </div>
+      </div>
     </div>
   )
 }
