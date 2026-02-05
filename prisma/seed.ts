@@ -1,85 +1,120 @@
 import { PrismaClient, ProjectStatus } from '@prisma/client'
+import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
 
 async function main() {
-  // Create a test user
-  const user = await prisma.user.upsert({
-    where: { email: 'test@example.com' },
+  // Create test users
+  const hashedPassword = await bcrypt.hash('password123', 12)
+  
+  const user1 = await prisma.user.upsert({
+    where: { email: 'john@example.com' },
     update: {},
     create: {
-      id: 'user_1',
-      email: 'test@example.com',
-      name: 'Test User',
-      role: 'user',
+      email: 'john@example.com',
+      name: 'John Doe',
+      password: hashedPassword,
+      role: 'USER',
     },
   })
 
-  // Create sample projects with different statuses
-  const projects = [
-    {
+  const user2 = await prisma.user.upsert({
+    where: { email: 'jane@example.com' },
+    update: {},
+    create: {
+      email: 'jane@example.com',
+      name: 'Jane Smith',
+      password: hashedPassword,
+      role: 'USER',
+    },
+  })
+
+  // Create sample projects
+  const project1 = await prisma.project.create({
+    data: {
       name: 'Website Redesign',
-      description: 'Complete overhaul of company website',
+      description: 'Complete redesign of the company website',
       status: ProjectStatus.IN_PROGRESS,
+      userId: user1.id,
     },
-    {
+  })
+
+  const project2 = await prisma.project.create({
+    data: {
       name: 'Mobile App Development',
-      description: 'iOS and Android app for customers',
+      description: 'Build a mobile app for iOS and Android',
       status: ProjectStatus.COMPLETE,
+      userId: user1.id,
     },
-    {
+  })
+
+  const project3 = await prisma.project.create({
+    data: {
       name: 'Database Migration',
-      description: 'Move from MySQL to PostgreSQL',
+      description: 'Migrate legacy database to PostgreSQL',
       status: ProjectStatus.APPROVED,
+      userId: user2.id,
     },
-    {
-      name: 'Marketing Campaign Q4',
-      description: 'Holiday marketing push',
-      status: ProjectStatus.FINISHED,
-      archivedAt: new Date('2023-12-31'),
-    },
-    {
-      name: 'Security Audit',
-      description: 'Comprehensive security review',
-      status: ProjectStatus.IN_PROGRESS,
-    },
-    {
-      name: 'Documentation Update',
-      description: 'Update all technical documentation',
-      status: ProjectStatus.COMPLETE,
-    },
-  ]
+  })
 
-  for (const projectData of projects) {
-    const project = await prisma.project.upsert({
-      where: { name: projectData.name },
-      update: {},
-      create: {
-        ...projectData,
-        userId: user.id,
-      },
-    })
+  // Create status history entries
+  await prisma.projectStatusHistory.create({
+    data: {
+      projectId: project1.id,
+      oldStatus: null,
+      newStatus: ProjectStatus.IN_PROGRESS,
+      changedBy: user1.id,
+    },
+  })
 
-    // Create initial status history entry
-    await prisma.projectStatusHistory.create({
-      data: {
-        projectId: project.id,
+  await prisma.projectStatusHistory.createMany({
+    data: [
+      {
+        projectId: project2.id,
         oldStatus: null,
-        newStatus: projectData.status,
-        changedBy: user.id,
+        newStatus: ProjectStatus.IN_PROGRESS,
+        changedBy: user1.id,
       },
-    })
-  }
+      {
+        projectId: project2.id,
+        oldStatus: ProjectStatus.IN_PROGRESS,
+        newStatus: ProjectStatus.COMPLETE,
+        changedBy: user1.id,
+      },
+    ],
+  })
 
-  console.log('Database seeded successfully!')
+  await prisma.projectStatusHistory.createMany({
+    data: [
+      {
+        projectId: project3.id,
+        oldStatus: null,
+        newStatus: ProjectStatus.IN_PROGRESS,
+        changedBy: user2.id,
+      },
+      {
+        projectId: project3.id,
+        oldStatus: ProjectStatus.IN_PROGRESS,
+        newStatus: ProjectStatus.COMPLETE,
+        changedBy: user2.id,
+      },
+      {
+        projectId: project3.id,
+        oldStatus: ProjectStatus.COMPLETE,
+        newStatus: ProjectStatus.APPROVED,
+        changedBy: user2.id,
+      },
+    ],
+  })
+
+  console.log('Database seeded successfully')
 }
 
 main()
-  .then(async () => {
-    await prisma.$disconnect()
-  })
-  .catch(async (e) => {
+  .catch((e) => {
     console.error(e)
-    await prisma.$disconnect()
     process.exit(1)
+  })
+  .finally(async () => {
+    await prisma.$disconnect()
   })

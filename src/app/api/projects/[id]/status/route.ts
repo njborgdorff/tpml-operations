@@ -1,35 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { ProjectStatus } from '@/types/project'
+import { ProjectStatus } from '@prisma/client'
+
+interface RouteParams {
+  params: {
+    id: string
+  }
+}
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: RouteParams
 ) {
   try {
+    const session = await getServerSession(authOptions)
+    
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { id } = params
     const body = await request.json()
-    const { status, userId } = body
+    const { status } = body
 
-    if (!status || !userId) {
+    if (!status || !Object.values(ProjectStatus).includes(status)) {
       return NextResponse.json(
-        { error: 'Status and userId are required' },
+        { error: 'Valid status is required' },
         { status: 400 }
       )
     }
 
-    // Validate status enum
-    if (!Object.values(ProjectStatus).includes(status)) {
-      return NextResponse.json(
-        { error: 'Invalid status value' },
-        { status: 400 }
-      )
-    }
-
-    // Get current project to track old status
+    // Get current project
     const currentProject = await prisma.project.findUnique({
       where: { id },
-      select: { status: true, userId: true }
+      select: {
+        id: true,
+        status: true,
+        userId: true,
+      },
     })
 
     if (!currentProject) {
@@ -39,30 +49,50 @@ export async function PATCH(
       )
     }
 
-    // Check if user owns the project
-    if (currentProject.userId !== userId) {
+    if (currentProject.userId !== session.user.id) {
       return NextResponse.json(
-        { error: 'Unauthorized to update this project' },
+        { error: 'Forbidden' },
         { status: 403 }
       )
+    }
+
+    // Special handling for archiving - set archivedAt timestamp
+    const updateData: any = {
+      status: status as ProjectStatus,
+      updatedAt: new Date(),
+    }
+
+    if (status === ProjectStatus.ARCHIVED) {
+      updateData.archivedAt = new Date()
     }
 
     // Update project status
     const updatedProject = await prisma.project.update({
       where: { id },
-      data: {
-        status,
-        archivedAt: status === ProjectStatus.FINISHED ? new Date() : null
-      },
+      data: updateData,
       include: {
         user: {
           select: {
             id: true,
             name: true,
-            email: true
-          }
-        }
-      }
+            email: true,
+          },
+        },
+        statusHistory: {
+          orderBy: {
+            changedAt: 'desc'
+          },
+          take: 1,
+          include: {
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
     })
 
     // Create status history entry
@@ -70,16 +100,16 @@ export async function PATCH(
       data: {
         projectId: id,
         oldStatus: currentProject.status,
-        newStatus: status,
-        changedBy: userId
-      }
+        newStatus: status as ProjectStatus,
+        changedBy: session.user.id,
+      },
     })
 
     return NextResponse.json(updatedProject)
   } catch (error) {
     console.error('Error updating project status:', error)
     return NextResponse.json(
-      { error: 'Failed to update project status' },
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }

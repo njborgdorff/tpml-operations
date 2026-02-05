@@ -1,47 +1,62 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Project, ProjectFilter, ProjectStatus, UpdateProjectStatusRequest } from '@/types/project'
+import { ProjectStatus } from '@prisma/client'
 
-const API_BASE = '/api/projects'
-
-// Fetch projects with optional filtering
-async function fetchProjects(filter: ProjectFilter = 'all'): Promise<Project[]> {
-  const url = filter === 'all' ? API_BASE : `${API_BASE}?filter=${filter}`
-  const response = await fetch(url)
-  
-  if (!response.ok) {
-    throw new Error('Failed to fetch projects')
+export interface Project {
+  id: string
+  name: string
+  description: string | null
+  status: ProjectStatus
+  createdAt: string
+  updatedAt: string
+  archivedAt: string | null
+  userId: string
+  user: {
+    id: string
+    name: string | null
+    email: string
   }
-  
-  return response.json()
+  statusHistory?: Array<{
+    id: string
+    oldStatus: ProjectStatus | null
+    newStatus: ProjectStatus
+    changedAt: string
+    user: {
+      name: string | null
+      email: string
+    }
+  }>
 }
 
-// Update project status
-async function updateProjectStatus(
-  projectId: string, 
-  data: UpdateProjectStatusRequest
-): Promise<Project> {
-  const response = await fetch(`${API_BASE}/${projectId}/status`, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(data),
-  })
-  
-  if (!response.ok) {
-    throw new Error('Failed to update project status')
-  }
-  
-  return response.json()
+export interface ProjectFilters {
+  status?: ProjectStatus | 'all'
+  view?: 'active' | 'finished' | 'all'
 }
 
-export function useProjects(filter: ProjectFilter = 'all') {
+export function useProjects(filters: ProjectFilters = {}) {
+  const queryParams = new URLSearchParams()
+  
+  if (filters.status && filters.status !== 'all') {
+    queryParams.set('status', filters.status)
+  }
+  
+  if (filters.view && filters.view !== 'all') {
+    queryParams.set('view', filters.view)
+  }
+
   return useQuery({
-    queryKey: ['projects', filter],
-    queryFn: () => fetchProjects(filter),
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    queryKey: ['projects', filters],
+    queryFn: async (): Promise<Project[]> => {
+      const url = `/api/projects${queryParams.toString() ? `?${queryParams.toString()}` : ''}`
+      const response = await fetch(url)
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch projects')
+      }
+      
+      return response.json()
+    },
   })
 }
 
@@ -49,11 +64,40 @@ export function useUpdateProjectStatus() {
   const queryClient = useQueryClient()
   
   return useMutation({
-    mutationFn: ({ projectId, status }: { projectId: string; status: ProjectStatus }) =>
-      updateProjectStatus(projectId, { status }),
+    mutationFn: async ({ projectId, status }: { projectId: string; status: ProjectStatus }) => {
+      const response = await fetch(`/api/projects/${projectId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status }),
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to update project status')
+      }
+      
+      return response.json()
+    },
     onSuccess: () => {
       // Invalidate all project queries to refetch data
       queryClient.invalidateQueries({ queryKey: ['projects'] })
     },
+  })
+}
+
+export function useProjectHistory(projectId: string) {
+  return useQuery({
+    queryKey: ['project-history', projectId],
+    queryFn: async () => {
+      const response = await fetch(`/api/projects/${projectId}/history`)
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch project history')
+      }
+      
+      return response.json()
+    },
+    enabled: !!projectId,
   })
 }
