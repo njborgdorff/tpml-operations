@@ -1,125 +1,97 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth/next'
-import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
-import { ProjectStatus } from '@prisma/client'
-import { z } from 'zod'
-
-const createProjectSchema = z.object({
-  name: z.string().min(1, 'Project name is required').max(255, 'Project name must be less than 255 characters'),
-  description: z.string().optional()
-})
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { prisma } from '@/lib/prisma';
+import { ProjectStatus } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    const session = await getServerSession();
+    
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { searchParams } = new URL(request.url)
-    const statusFilter = searchParams.get('status')
-    const showArchived = searchParams.get('archived') === 'true'
+    const { searchParams } = new URL(request.url);
+    const filter = searchParams.get('filter') || 'all';
 
-    let whereClause: any = {
-      userId: session.user.id
-    }
-
-    if (showArchived) {
-      whereClause.status = ProjectStatus.ARCHIVED
-    } else if (statusFilter === 'active') {
-      whereClause.status = {
-        in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE]
-      }
-    } else if (statusFilter && Object.values(ProjectStatus).includes(statusFilter as ProjectStatus)) {
-      whereClause.status = statusFilter as ProjectStatus
-    } else if (!showArchived) {
-      // Default: exclude archived projects
-      whereClause.status = {
-        not: ProjectStatus.ARCHIVED
-      }
+    let statusFilter = {};
+    
+    if (filter === 'active') {
+      statusFilter = {
+        status: {
+          in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE]
+        }
+      };
+    } else if (filter === 'finished') {
+      statusFilter = {
+        status: ProjectStatus.FINISHED
+      };
     }
 
     const projects = await prisma.project.findMany({
-      where: whereClause,
+      where: {
+        user: {
+          email: session.user.email
+        },
+        ...statusFilter
+      },
       include: {
         user: {
           select: {
             id: true,
             name: true,
             email: true
-          }
-        },
-        statusHistory: {
-          orderBy: {
-            changedAt: 'desc'
-          },
-          take: 1,
-          include: {
-            user: {
-              select: {
-                name: true,
-                email: true
-              }
-            }
           }
         }
       },
       orderBy: {
         updatedAt: 'desc'
       }
-    })
+    });
 
-    return NextResponse.json(projects)
+    return NextResponse.json(projects);
   } catch (error) {
-    console.error('Error fetching projects:', error)
+    console.error('Error fetching projects:', error);
     return NextResponse.json(
       { error: 'Failed to fetch projects' },
       { status: 500 }
-    )
+    );
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const body = await request.json()
+    const session = await getServerSession();
     
-    // Validate input
-    const validationResult = createProjectSchema.safeParse(body)
-    if (!validationResult.success) {
-      return NextResponse.json(
-        { error: 'Validation failed', details: validationResult.error.errors },
-        { status: 400 }
-      )
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { name, description } = validationResult.data
+    const body = await request.json();
+    const { name, description } = body;
 
-    // Create project and initial status history entry
+    if (!name) {
+      return NextResponse.json(
+        { error: 'Project name is required' },
+        { status: 400 }
+      );
+    }
+
+    // Find user
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email }
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
     const project = await prisma.project.create({
       data: {
         name,
         description,
-        userId: session.user.id,
         status: ProjectStatus.IN_PROGRESS,
-        statusHistory: {
-          create: {
-            oldStatus: null,
-            newStatus: ProjectStatus.IN_PROGRESS,
-            changedBy: session.user.id
-          }
-        }
+        userId: user.id
       },
       include: {
         user: {
@@ -128,26 +100,26 @@ export async function POST(request: NextRequest) {
             name: true,
             email: true
           }
-        },
-        statusHistory: {
-          include: {
-            user: {
-              select: {
-                name: true,
-                email: true
-              }
-            }
-          }
         }
       }
-    })
+    });
 
-    return NextResponse.json(project, { status: 201 })
+    // Create initial status history entry
+    await prisma.projectStatusHistory.create({
+      data: {
+        projectId: project.id,
+        oldStatus: null,
+        newStatus: ProjectStatus.IN_PROGRESS,
+        changedBy: user.id
+      }
+    });
+
+    return NextResponse.json(project);
   } catch (error) {
-    console.error('Error creating project:', error)
+    console.error('Error creating project:', error);
     return NextResponse.json(
       { error: 'Failed to create project' },
       { status: 500 }
-    )
+    );
   }
 }

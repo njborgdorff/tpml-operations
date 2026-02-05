@@ -1,61 +1,43 @@
 'use client'
 
-import { ProjectFilter as FilterType } from '@/lib/types'
+import { ProjectFilter } from '@/lib/types'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from './ui/select'
 
 interface ProjectFilterProps {
-  currentFilter: FilterType
-  onFilterChange: (filter: FilterType) => void
-  projectCounts?: {
-    all: number
-    active: number
-    finished: number
-  }
+  currentFilter: ProjectFilter
+  onFilterChange: (filter: ProjectFilter) => void
 }
 
-export function ProjectFilter({ 
-  currentFilter, 
-  onFilterChange, 
-  projectCounts 
-}: ProjectFilterProps) {
-  const formatFilterLabel = (filter: FilterType, count?: number) => {
-    const labels = {
-      all: 'All Projects',
-      active: 'Active Projects',
-      finished: 'Finished Projects'
-    }
-    
-    const label = labels[filter]
-    return count !== undefined ? `${label} (${count})` : label
-  }
+export function ProjectFilterSelect({ currentFilter, onFilterChange }: ProjectFilterProps) {
+  const filterOptions: { value: ProjectFilter; label: string }[] = [
+    { value: 'all', label: 'All Projects' },
+    { value: 'active', label: 'Active Projects' },
+    { value: 'finished', label: 'Finished Projects' },
+  ]
 
   return (
-    <div className="flex flex-col space-y-2">
-      <label className="text-sm font-medium text-gray-700">
-        Filter Projects
-      </label>
-      <Select value={currentFilter} onValueChange={onFilterChange}>
-        <SelectTrigger className="w-full max-w-xs">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">
-            {formatFilterLabel('all', projectCounts?.all)}
+    <Select
+      value={currentFilter}
+      onValueChange={(value) => onFilterChange(value as ProjectFilter)}
+    >
+      <SelectTrigger className="w-48">
+        <SelectValue>
+          {filterOptions.find(option => option.value === currentFilter)?.label}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {filterOptions.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
           </SelectItem>
-          <SelectItem value="active">
-            {formatFilterLabel('active', projectCounts?.active)}
-          </SelectItem>
-          <SelectItem value="finished">
-            {formatFilterLabel('finished', projectCounts?.finished)}
-          </SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }

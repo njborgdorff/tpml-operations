@@ -1,8 +1,8 @@
 'use client'
 
-import { Badge } from '@/components/ui/badge'
 import { ProjectStatus } from '@/lib/types'
 import { getStatusColor, getStatusLabel } from '@/lib/utils'
+import { Badge } from './ui/badge'
 
 interface ProjectStatusBadgeProps {
   status: ProjectStatus
@@ -11,7 +11,10 @@ interface ProjectStatusBadgeProps {
 
 export function ProjectStatusBadge({ status, className }: ProjectStatusBadgeProps) {
   return (
-    <Badge className={`${getStatusColor(status)} ${className || ''}`}>
+    <Badge 
+      variant="outline" 
+      className={`${getStatusColor(status)} ${className || ''}`}
+    >
       {getStatusLabel(status)}
     </Badge>
   )

@@ -6,7 +6,7 @@ const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: 'Finished Project Management',
-  description: 'A simple project archiving system by TPML',
+  description: 'Manage your completed and finished projects',
 }
 
 export default function RootLayout({
@@ -18,13 +18,9 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <div className="min-h-screen bg-background">
-          <header className="border-b">
-            <div className="container mx-auto px-4 py-4">
-              <h1 className="text-xl font-semibold">Finished Project Management</h1>
-              <p className="text-sm text-muted-foreground">TPML Internal Tool</p>
-            </div>
-          </header>
-          {children}
+          <main className="container mx-auto px-4 py-8">
+            {children}
+          </main>
         </div>
       </body>
     </html>
