@@ -1,59 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSession } from '@/lib/auth'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { ProjectStatus } from '@prisma/client'
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getSession()
-    
-    if (!session?.user?.id) {
+    const session = await getServerSession(authOptions)
+    if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { searchParams } = new URL(request.url)
-    const statusFilter = searchParams.get('status')
-    const filterType = searchParams.get('filter') // 'active', 'finished', or 'all'
+    const status = searchParams.get('status')
 
     let whereClause: any = {
-      userId: session.user.id,
+      userId: session.user.id
     }
 
-    // Apply filtering logic
-    if (filterType === 'active') {
-      whereClause.status = {
-        in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE]
-      }
-    } else if (filterType === 'finished') {
-      whereClause.status = ProjectStatus.FINISHED
-    } else if (statusFilter && statusFilter !== 'all') {
-      whereClause.status = statusFilter as ProjectStatus
+    if (status === 'active') {
+      whereClause.status = { in: ['IN_PROGRESS', 'COMPLETE'] }
+    } else if (status === 'finished') {
+      whereClause.status = 'FINISHED'
+    } else if (status) {
+      whereClause.status = status
     }
 
     const projects = await prisma.project.findMany({
       where: whereClause,
+      orderBy: { updatedAt: 'desc' },
       include: {
         user: {
           select: { id: true, name: true, email: true }
-        },
-        statusHistory: {
-          orderBy: { changedAt: 'desc' },
-          take: 1,
-          include: {
-            user: {
-              select: { id: true, name: true, email: true }
-            }
-          }
         }
-      },
-      orderBy: { updatedAt: 'desc' }
+      }
     })
 
     return NextResponse.json(projects)
   } catch (error) {
     console.error('Error fetching projects:', error)
     return NextResponse.json(
-      { error: 'Internal server error' }, 
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }
@@ -61,9 +47,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession()
-    
-    if (!session?.user?.id) {
+    const session = await getServerSession(authOptions)
+    if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -72,45 +57,39 @@ export async function POST(request: NextRequest) {
 
     if (!name) {
       return NextResponse.json(
-        { error: 'Project name is required' }, 
+        { error: 'Project name is required' },
         { status: 400 }
       )
     }
 
-    // Create project and initial status history in a transaction
-    const project = await prisma.$transaction(async (tx) => {
-      const newProject = await tx.project.create({
-        data: {
-          name,
-          description,
-          userId: session.user.id,
-          status: ProjectStatus.IN_PROGRESS
-        },
-        include: {
-          user: {
-            select: { id: true, name: true, email: true }
-          }
+    const project = await prisma.project.create({
+      data: {
+        name,
+        description: description || '',
+        status: 'IN_PROGRESS',
+        userId: session.user.id
+      },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true }
         }
-      })
+      }
+    })
 
-      // Create initial status history entry
-      await tx.projectStatusHistory.create({
-        data: {
-          projectId: newProject.id,
-          oldStatus: null,
-          newStatus: ProjectStatus.IN_PROGRESS,
-          changedBy: session.user.id
-        }
-      })
-
-      return newProject
+    // Create initial status history entry
+    await prisma.projectStatusHistory.create({
+      data: {
+        projectId: project.id,
+        newStatus: 'IN_PROGRESS',
+        changedBy: session.user.id
+      }
     })
 
     return NextResponse.json(project, { status: 201 })
   } catch (error) {
     console.error('Error creating project:', error)
     return NextResponse.json(
-      { error: 'Internal server error' }, 
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }

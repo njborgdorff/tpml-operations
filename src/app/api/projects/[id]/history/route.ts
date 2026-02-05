@@ -1,50 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSession } from '@/lib/auth'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+interface RouteParams {
+  params: {
+    id: string
+  }
+}
+
+export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession()
-    
-    if (!session?.user?.id) {
+    const session = await getServerSession(authOptions)
+    if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Verify project exists and user owns it
-    const project = await prisma.project.findFirst({
-      where: {
-        id: params.id,
-        userId: session.user.id
-      }
+    // Check if user owns the project
+    const project = await prisma.project.findUnique({
+      where: { id: params.id }
     })
 
     if (!project) {
       return NextResponse.json(
-        { error: 'Project not found or access denied' }, 
+        { error: 'Project not found' },
         { status: 404 }
       )
     }
 
+    if (project.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: 'Forbidden' },
+        { status: 403 }
+      )
+    }
+
     const history = await prisma.projectStatusHistory.findMany({
-      where: {
-        projectId: params.id
-      },
+      where: { projectId: params.id },
+      orderBy: { changedAt: 'desc' },
       include: {
         user: {
           select: { id: true, name: true, email: true }
         }
-      },
-      orderBy: { changedAt: 'desc' }
+      }
     })
 
     return NextResponse.json(history)
   } catch (error) {
     console.error('Error fetching project history:', error)
     return NextResponse.json(
-      { error: 'Internal server error' }, 
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }

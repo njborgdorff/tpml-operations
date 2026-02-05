@@ -1,94 +1,87 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSession } from '@/lib/auth'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { ProjectStatus } from '@prisma/client'
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+interface RouteParams {
+  params: {
+    id: string
+  }
+}
+
+export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession()
-    
-    if (!session?.user?.id) {
+    const session = await getServerSession(authOptions)
+    if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const body = await request.json()
     const { status } = body
 
-    if (!status || !Object.values(ProjectStatus).includes(status)) {
+    if (!status) {
       return NextResponse.json(
-        { error: 'Valid status is required' }, 
+        { error: 'Status is required' },
         { status: 400 }
       )
     }
 
-    // Verify project exists and user owns it
-    const existingProject = await prisma.project.findFirst({
-      where: {
-        id: params.id,
-        userId: session.user.id
-      }
+    const validStatuses = ['IN_PROGRESS', 'COMPLETE', 'APPROVED', 'FINISHED']
+    if (!validStatuses.includes(status)) {
+      return NextResponse.json(
+        { error: 'Invalid status' },
+        { status: 400 }
+      )
+    }
+
+    // Get current project to check ownership and current status
+    const currentProject = await prisma.project.findUnique({
+      where: { id: params.id }
     })
 
-    if (!existingProject) {
+    if (!currentProject) {
       return NextResponse.json(
-        { error: 'Project not found or access denied' }, 
+        { error: 'Project not found' },
         { status: 404 }
       )
     }
 
-    // Don't allow updating if status is the same
-    if (existingProject.status === status) {
+    if (currentProject.userId !== session.user.id) {
       return NextResponse.json(
-        { error: 'Project is already in this status' }, 
-        { status: 400 }
+        { error: 'Forbidden' },
+        { status: 403 }
       )
     }
 
-    // Update project status and create history entry in transaction
-    const updatedProject = await prisma.$transaction(async (tx) => {
-      const project = await tx.project.update({
-        where: { id: params.id },
-        data: {
-          status: status as ProjectStatus,
-          archivedAt: status === ProjectStatus.FINISHED ? new Date() : null
-        },
-        include: {
-          user: {
-            select: { id: true, name: true, email: true }
-          },
-          statusHistory: {
-            orderBy: { changedAt: 'desc' },
-            take: 1,
-            include: {
-              user: {
-                select: { id: true, name: true, email: true }
-              }
-            }
-          }
+    // Update project status
+    const project = await prisma.project.update({
+      where: { id: params.id },
+      data: { 
+        status,
+        archivedAt: status === 'FINISHED' ? new Date() : null
+      },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true }
         }
-      })
-
-      // Create status history entry
-      await tx.projectStatusHistory.create({
-        data: {
-          projectId: params.id,
-          oldStatus: existingProject.status,
-          newStatus: status as ProjectStatus,
-          changedBy: session.user.id
-        }
-      })
-
-      return project
+      }
     })
 
-    return NextResponse.json(updatedProject)
+    // Create status history entry
+    await prisma.projectStatusHistory.create({
+      data: {
+        projectId: params.id,
+        oldStatus: currentProject.status,
+        newStatus: status,
+        changedBy: session.user.id
+      }
+    })
+
+    return NextResponse.json(project)
   } catch (error) {
     console.error('Error updating project status:', error)
     return NextResponse.json(
-      { error: 'Internal server error' }, 
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }

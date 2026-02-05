@@ -1,71 +1,93 @@
-'use client'
+"use client"
 
-import { signIn, getProviders } from 'next-auth/react'
-import { useEffect, useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { useState } from "react"
+import { signIn, getSession } from "next-auth/react"
+import { useRouter } from "next/navigation"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 export default function SignIn() {
-  const [providers, setProviders] = useState<any>(null)
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState("")
+  const router = useRouter()
 
-  useEffect(() => {
-    (async () => {
-      const res = await getProviders()
-      setProviders(res)
-    })()
-  }, [])
-
-  const handleSignIn = async (providerId: string) => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
     setIsLoading(true)
+    setError("")
+
     try {
-      await signIn(providerId, { callbackUrl: '/' })
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      })
+
+      if (result?.error) {
+        setError("Invalid credentials")
+      } else {
+        // Check if sign in was successful
+        const session = await getSession()
+        if (session) {
+          router.push("/")
+        }
+      }
     } catch (error) {
-      console.error('Sign in error:', error)
+      setError("Something went wrong")
     } finally {
       setIsLoading(false)
     }
   }
 
-  if (!providers) {
-    return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="max-w-md mx-auto">
-          <div className="h-48 bg-muted animate-pulse rounded-lg" />
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="max-w-md mx-auto">
-        <Card>
-          <CardHeader className="text-center">
-            <CardTitle>Sign In</CardTitle>
-            <CardDescription>
-              Choose your preferred sign in method to access your project dashboard
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {Object.values(providers).map((provider: any) => (
-              <Button
-                key={provider.name}
-                variant="outline"
-                className="w-full"
-                onClick={() => handleSignIn(provider.id)}
-                disabled={isLoading}
-              >
-                <span className="flex items-center gap-2">
-                  {provider.name === 'Google' && '🌐'}
-                  {provider.name === 'GitHub' && '🐱'}
-                  Sign in with {provider.name}
-                </span>
-              </Button>
-            ))}
-          </CardContent>
-        </Card>
-      </div>
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <Card className="w-full max-w-md">
+        <CardHeader className="text-center">
+          <CardTitle>Sign In</CardTitle>
+          <CardDescription>
+            Enter your email and password to access your projects
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="Enter your email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="Enter your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            {error && (
+              <div className="text-red-600 text-sm">{error}</div>
+            )}
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? "Signing in..." : "Sign In"}
+            </Button>
+          </form>
+          <div className="mt-4 text-center text-sm text-gray-600">
+            <p>Demo credentials: any email and password</p>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
