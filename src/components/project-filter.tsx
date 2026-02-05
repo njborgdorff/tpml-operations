@@ -1,49 +1,61 @@
-"use client"
+'use client'
 
-import { useState } from "react"
-import { ProjectStatus, PROJECT_STATUS_LABELS } from "@/types/project"
+import { ProjectFilter as FilterType } from '@/lib/types'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-
-export type FilterOption = 'all' | 'active' | 'finished' | ProjectStatus
+} from '@/components/ui/select'
 
 interface ProjectFilterProps {
-  value: FilterOption
-  onValueChange: (filter: FilterOption) => void
-  className?: string
+  currentFilter: FilterType
+  onFilterChange: (filter: FilterType) => void
+  projectCounts?: {
+    all: number
+    active: number
+    finished: number
+  }
 }
 
 export function ProjectFilter({ 
-  value, 
-  onValueChange, 
-  className 
+  currentFilter, 
+  onFilterChange, 
+  projectCounts 
 }: ProjectFilterProps) {
-  const filterOptions = [
-    { value: 'all' as const, label: 'All Projects' },
-    { value: 'active' as const, label: 'Active Projects' },
-    { value: 'finished' as const, label: 'Finished Projects' },
-    { value: ProjectStatus.IN_PROGRESS, label: PROJECT_STATUS_LABELS[ProjectStatus.IN_PROGRESS] },
-    { value: ProjectStatus.COMPLETE, label: PROJECT_STATUS_LABELS[ProjectStatus.COMPLETE] },
-    { value: ProjectStatus.APPROVED, label: PROJECT_STATUS_LABELS[ProjectStatus.APPROVED] },
-  ]
+  const formatFilterLabel = (filter: FilterType, count?: number) => {
+    const labels = {
+      all: 'All Projects',
+      active: 'Active Projects',
+      finished: 'Finished Projects'
+    }
+    
+    const label = labels[filter]
+    return count !== undefined ? `${label} (${count})` : label
+  }
 
   return (
-    <Select value={value} onValueChange={onValueChange}>
-      <SelectTrigger className={className}>
-        <SelectValue placeholder="Filter projects..." />
-      </SelectTrigger>
-      <SelectContent>
-        {filterOptions.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
+    <div className="flex flex-col space-y-2">
+      <label className="text-sm font-medium text-gray-700">
+        Filter Projects
+      </label>
+      <Select value={currentFilter} onValueChange={onFilterChange}>
+        <SelectTrigger className="w-full max-w-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">
+            {formatFilterLabel('all', projectCounts?.all)}
           </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+          <SelectItem value="active">
+            {formatFilterLabel('active', projectCounts?.active)}
+          </SelectItem>
+          <SelectItem value="finished">
+            {formatFilterLabel('finished', projectCounts?.finished)}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
   )
 }

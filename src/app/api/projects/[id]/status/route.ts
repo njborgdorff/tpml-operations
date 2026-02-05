@@ -1,32 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
-import { ProjectStatus } from '@/types/project'
-import { authOptions } from '@/lib/auth'
+import { ProjectStatus } from '@prisma/client'
+
+interface RouteParams {
+  params: {
+    id: string
+  }
+}
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: RouteParams
 ) {
   try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email }
-    })
-
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
-    }
-
-    const projectId = params.id
+    const { id } = params
     const body = await request.json()
-    const { status } = body
+    const { status, userId = 'user_1' } = body
 
-    // Validate status
+    // Validate input
+    if (!id?.trim()) {
+      return NextResponse.json(
+        { error: 'Project ID is required' },
+        { status: 400 }
+      )
+    }
+
     if (!Object.values(ProjectStatus).includes(status)) {
       return NextResponse.json(
         { error: 'Invalid status value' },
@@ -34,18 +32,16 @@ export async function PATCH(
       )
     }
 
+    if (!userId?.trim()) {
+      return NextResponse.json(
+        { error: 'User ID is required' },
+        { status: 400 }
+      )
+    }
+
     // Get current project
     const currentProject = await prisma.project.findUnique({
-      where: { id: projectId },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true
-          }
-        }
-      }
+      where: { id: id.trim() }
     })
 
     if (!currentProject) {
@@ -55,24 +51,33 @@ export async function PATCH(
       )
     }
 
-    // Check if status is actually changing
-    if (currentProject.status === status) {
-      return NextResponse.json(currentProject)
+    // Validate status transition
+    if (status === ProjectStatus.FINISHED && currentProject.status !== ProjectStatus.APPROVED) {
+      return NextResponse.json(
+        { error: 'Only approved projects can be moved to finished' },
+        { status: 400 }
+      )
     }
 
     // Update project status
     const updatedProject = await prisma.project.update({
-      where: { id: projectId },
+      where: { id: id.trim() },
       data: {
-        status,
-        archivedAt: status === ProjectStatus.FINISHED ? new Date() : null
+        status: status,
+        archivedAt: status === ProjectStatus.FINISHED ? new Date() : null,
       },
       include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true
+        statusHistory: {
+          include: {
+            user: {
+              select: {
+                name: true,
+                email: true
+              }
+            }
+          },
+          orderBy: {
+            changedAt: 'desc'
           }
         }
       }
@@ -81,18 +86,18 @@ export async function PATCH(
     // Create status history entry
     await prisma.projectStatusHistory.create({
       data: {
-        projectId: projectId,
+        projectId: id.trim(),
         oldStatus: currentProject.status,
         newStatus: status,
-        changedBy: user.id
-      }
+        changedBy: userId.trim(),
+      },
     })
 
-    return NextResponse.json(updatedProject)
+    return NextResponse.json({ project: updatedProject })
   } catch (error) {
-    console.error('Error updating project status:', error)
+    console.error('Failed to update project status:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Failed to update project status' },
       { status: 500 }
     )
   }

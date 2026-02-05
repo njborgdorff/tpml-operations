@@ -14,13 +14,12 @@ model User {
   id        String   @id @default(cuid())
   email     String   @unique
   name      String?
-  role      String   @default("USER")
+  role      String   @default("user")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
   projects              Project[]
-  projectStatusChanges  ProjectStatusHistory[]
+  projectStatusHistory  ProjectStatusHistory[]
 
   @@map("users")
 }
@@ -35,7 +34,6 @@ model Project {
   archivedAt  DateTime?
   userId      String
 
-  // Relations
   user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   statusHistory ProjectStatusHistory[]
 
@@ -50,9 +48,8 @@ model ProjectStatusHistory {
   changedAt DateTime  @default(now())
   changedBy String
 
-  // Relations
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user    User    @relation(fields: [changedBy], references: [id])
+  user    User    @relation(fields: [changedBy], references: [id], onDelete: Cascade)
 
   @@map("project_status_history")
 }

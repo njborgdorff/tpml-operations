@@ -1,113 +1,98 @@
-"use client"
+'use client'
 
-import { useState } from "react"
-import { Project, ProjectStatus } from "@/types/project"
-import { ProjectStatusBadge } from "./project-status-badge"
-import { ProjectStatusSelect } from "./project-status-select"
-import { formatDate } from "@/lib/utils"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { MoreHorizontal, Edit, Clock } from "lucide-react"
+import { useState } from 'react'
+import { ProjectWithHistory } from '@/lib/types'
+import { formatDate } from '@/lib/utils'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { ProjectStatusBadge } from './project-status-badge'
+import { ProjectStatusSelector } from './project-status-selector'
+import { ProjectStatusHistoryComponent } from './project-status-history'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
+import { Clock, History } from 'lucide-react'
 
 interface ProjectCardProps {
-  project: Project
-  onStatusChange: (projectId: string, newStatus: ProjectStatus) => Promise<void>
+  project: ProjectWithHistory
+  onStatusUpdate: (projectId: string, status: string) => Promise<void>
   isUpdating?: boolean
-  className?: string
 }
 
-export function ProjectCard({ 
-  project, 
-  onStatusChange, 
-  isUpdating = false,
-  className 
-}: ProjectCardProps) {
-  const [isEditingStatus, setIsEditingStatus] = useState(false)
-  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
+export function ProjectCard({ project, onStatusUpdate, isUpdating = false }: ProjectCardProps) {
+  const [showHistory, setShowHistory] = useState(false)
+  const [isLocalUpdating, setIsLocalUpdating] = useState(false)
 
-  const handleStatusUpdate = async (newStatus: ProjectStatus) => {
-    if (newStatus === project.status) {
-      setIsEditingStatus(false)
-      return
-    }
-
-    setIsUpdatingStatus(true)
+  const handleStatusChange = async (status: string) => {
+    setIsLocalUpdating(true)
     try {
-      await onStatusChange(project.id, newStatus)
-      setIsEditingStatus(false)
-    } catch (error) {
-      console.error('Failed to update project status:', error)
+      await onStatusUpdate(project.id, status)
     } finally {
-      setIsUpdatingStatus(false)
+      setIsLocalUpdating(false)
     }
   }
 
+  const loading = isUpdating || isLocalUpdating
+
   return (
-    <Card className={className}>
-      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-        <CardTitle className="text-lg font-semibold line-clamp-2">
-          {project.name}
-        </CardTitle>
-        
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-              <MoreHorizontal className="h-4 w-4" />
-              <span className="sr-only">Open menu</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => setIsEditingStatus(!isEditingStatus)}>
-              <Edit className="mr-2 h-4 w-4" />
-              Update Status
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </CardHeader>
-      
-      <CardContent className="space-y-4">
+    <Card className="hover:shadow-md transition-shadow">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between">
+          <CardTitle className="text-lg font-semibold truncate pr-4">
+            {project.name}
+          </CardTitle>
+          <ProjectStatusBadge status={project.status} />
+        </div>
         {project.description && (
-          <p className="text-sm text-muted-foreground line-clamp-3">
+          <p className="text-sm text-gray-600 mt-2 line-clamp-2">
             {project.description}
           </p>
         )}
-        
-        <div className="flex items-center justify-between">
-          {isEditingStatus ? (
-            <div className="flex-1 max-w-40">
-              <ProjectStatusSelect
-                value={project.status}
-                onValueChange={handleStatusUpdate}
-                disabled={isUpdatingStatus}
-              />
-            </div>
-          ) : (
-            <ProjectStatusBadge status={project.status} />
-          )}
-          
-          <div className="flex items-center text-xs text-muted-foreground">
-            <Clock className="mr-1 h-3 w-3" />
-            Updated {formatDate(project.updatedAt)}
-          </div>
+      </CardHeader>
+      
+      <CardContent className="space-y-4">
+        {/* Status Update Section */}
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-700">Update Status</label>
+          <ProjectStatusSelector
+            currentStatus={project.status}
+            onStatusChange={handleStatusChange}
+            disabled={loading}
+          />
         </div>
-        
-        {project.archivedAt && (
-          <div className="text-xs text-muted-foreground">
-            Archived on {formatDate(project.archivedAt)}
+
+        {/* Project Metadata */}
+        <div className="flex items-center justify-between text-xs text-gray-500">
+          <div className="flex items-center space-x-1">
+            <Clock className="h-3 w-3" />
+            <span>Updated {formatDate(new Date(project.updatedAt))}</span>
           </div>
-        )}
-        
-        {project.user && (
-          <div className="text-xs text-muted-foreground">
-            Created by {project.user.name || project.user.email}
-          </div>
-        )}
+          {project.archivedAt && (
+            <span>Archived {formatDate(new Date(project.archivedAt))}</span>
+          )}
+        </div>
+
+        {/* Status History */}
+        <div className="border-t pt-3">
+          <Dialog open={showHistory} onOpenChange={setShowHistory}>
+            <DialogTrigger asChild>
+              <Button variant="ghost" size="sm" className="w-full justify-start p-0 h-auto">
+                <History className="h-4 w-4 mr-2" />
+                <span>View Status History ({project.statusHistory.length})</span>
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Status History - {project.name}</DialogTitle>
+              </DialogHeader>
+              <ProjectStatusHistoryComponent history={project.statusHistory} />
+            </DialogContent>
+          </Dialog>
+        </div>
       </CardContent>
     </Card>
   )

@@ -1,23 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
-import { authOptions } from '@/lib/auth'
+
+interface RouteParams {
+  params: {
+    id: string
+  }
+}
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: RouteParams
 ) {
   try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { id } = params
 
-    const projectId = params.id
+    if (!id?.trim()) {
+      return NextResponse.json(
+        { error: 'Project ID is required' },
+        { status: 400 }
+      )
+    }
 
     // Verify project exists
     const project = await prisma.project.findUnique({
-      where: { id: projectId }
+      where: { id: id.trim() }
     })
 
     if (!project) {
@@ -28,24 +34,27 @@ export async function GET(
     }
 
     const history = await prisma.projectStatusHistory.findMany({
-      where: { projectId },
+      where: {
+        projectId: id.trim()
+      },
       include: {
         user: {
           select: {
-            id: true,
             name: true,
             email: true
           }
         }
       },
-      orderBy: { changedAt: 'desc' }
+      orderBy: {
+        changedAt: 'desc'
+      }
     })
 
-    return NextResponse.json(history)
+    return NextResponse.json({ history })
   } catch (error) {
-    console.error('Error fetching project history:', error)
+    console.error('Failed to fetch project history:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Failed to fetch project history' },
       { status: 500 }
     )
   }
