@@ -1,208 +1,241 @@
-import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
-import { prisma } from '@/lib/db/prisma';
-import { IntakeSchema, IntakeData } from '@/types';
-import { syncKnowledgeBase } from '@/lib/knowledge/sync';
-import fs from 'fs/promises';
-import path from 'path';
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+import { ProjectStatus } from '@prisma/client';
+import { validateProjectData, isValidProjectStatus } from '@/lib/project-utils';
+import { z } from 'zod';
 
-const PROJECTS_ROOT = 'C:/tpml-ai-team/projects';
-const TEMPLATES_ROOT = 'C:/tpml-ai-team/tpml-core/templates/project-setup';
+// Request validation schemas
+const createProjectSchema = z.object({
+  name: z.string().min(1, 'Name is required').max(100, 'Name must be 100 characters or less'),
+  description: z.string().max(500, 'Description must be 500 characters or less').optional(),
+});
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-}
+const projectsQuerySchema = z.object({
+  status: z.enum(['active', 'finished', 'all']).optional().default('active'),
+  page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+  limit: z.string().regex(/^\d+$/).transform(Number).optional().default('10'),
+});
 
-/**
- * Create the project folder structure with template files
- */
-async function createProjectFolder(slug: string, projectName: string, clientName: string, intakeData: IntakeData): Promise<void> {
-  const projectPath = path.join(PROJECTS_ROOT, slug);
-  const docsPath = path.join(projectPath, 'docs');
-
-  // Create directories
-  await fs.mkdir(projectPath, { recursive: true });
-  await fs.mkdir(docsPath, { recursive: true });
-
-  // Create CLAUDE.md with project context
-  const claudeMd = `# ${projectName}
-
-## Client
-${clientName}
-
-## Problem Statement
-${intakeData.problemStatement}
-
-## Target Users
-${intakeData.targetUsers}
-
-## Key Workflows
-${intakeData.keyWorkflows}
-
-## Success Criteria
-${intakeData.successCriteria}
-
-${intakeData.timeline ? `## Timeline\n${intakeData.timeline}\n` : ''}
-${intakeData.budget ? `## Budget\n${intakeData.budget}\n` : ''}
-${intakeData.constraints ? `## Constraints\n${intakeData.constraints}\n` : ''}
-
-## Project Structure
-
-- \`docs/\` - Project documentation and handoffs
-- \`src/\` - Source code (created during implementation)
-
-## AI Team Instructions
-
-This project is managed through the TPML Operations dashboard.
-Artifacts (BACKLOG.md, ARCHITECTURE.md, etc.) will be generated automatically
-and stored in both the database and the \`docs/\` folder.
-`;
-
-  await fs.writeFile(path.join(projectPath, 'CLAUDE.md'), claudeMd);
-
-  // Create initial PROJECT_STATUS.md
-  const statusMd = `# Project Status: ${projectName}
-
-## Current Phase
-INTAKE - Awaiting AI team planning
-
-## Last Updated
-${new Date().toISOString().split('T')[0]}
-
-## Summary
-Project created. Waiting for PM and CTO to generate development plan.
-
-## Next Steps
-1. Generate plan using the dashboard
-2. Review and approve the plan
-3. Begin implementation
-`;
-
-  await fs.writeFile(path.join(docsPath, 'PROJECT_STATUS.md'), statusMd);
-
-  // Copy template files if they exist
-  try {
-    const templates = ['TEAM_LOG.md'];
-    for (const template of templates) {
-      const templatePath = path.join(TEMPLATES_ROOT, template);
-      const destPath = path.join(docsPath, template);
-      try {
-        const content = await fs.readFile(templatePath, 'utf-8');
-        await fs.writeFile(destPath, content.replace(/\{\{PROJECT_NAME\}\}/g, projectName));
-      } catch {
-        // Template doesn't exist, skip
-      }
-    }
-  } catch {
-    // Templates folder doesn't exist, skip
-  }
-}
-
-export async function POST(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: 'Unauthorized', code: 'AUTH_REQUIRED' }, 
+        { status: 401 }
+      );
     }
 
-    const body = await request.json();
-    const validated = IntakeSchema.safeParse(body);
+    // Parse and validate query parameters
+    const { searchParams } = new URL(request.url);
+    const queryResult = projectsQuerySchema.safeParse({
+      status: searchParams.get('status'),
+      page: searchParams.get('page'),
+      limit: searchParams.get('limit'),
+    });
 
-    if (!validated.success) {
+    if (!queryResult.success) {
       return NextResponse.json(
-        { error: 'Validation failed', details: validated.error.flatten() },
+        { 
+          error: 'Invalid query parameters', 
+          code: 'VALIDATION_ERROR',
+          details: queryResult.error.errors 
+        }, 
         { status: 400 }
       );
     }
 
-    const data = validated.data;
+    const { status, page, limit } = queryResult.data;
 
-    // Find or create client
-    let client = await prisma.client.findFirst({
-      where: { name: { equals: data.client, mode: 'insensitive' } },
-    });
+    // Build status filter
+    let statusFilter: { status?: { in: ProjectStatus[] } | ProjectStatus } = {};
+    if (status === 'active') {
+      statusFilter.status = { 
+        in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE, ProjectStatus.APPROVED] 
+      };
+    } else if (status === 'finished') {
+      statusFilter.status = ProjectStatus.FINISHED;
+    }
+    // 'all' means no status filter
 
-    if (!client) {
-      client = await prisma.client.create({
-        data: {
-          name: data.client,
-          slug: slugify(data.client),
+    const skip = (page - 1) * limit;
+
+    // Get projects with pagination and total count
+    const [projects, totalCount] = await Promise.all([
+      prisma.project.findMany({
+        where: {
+          userId: session.user.id,
+          ...statusFilter,
         },
-      });
-    }
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          statusHistory: {
+            orderBy: { changedAt: 'desc' },
+            take: 1,
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { updatedAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.project.count({
+        where: {
+          userId: session.user.id,
+          ...statusFilter,
+        },
+      }),
+    ]);
 
-    // Create project with unique slug
-    const baseSlug = slugify(data.name);
-    let slug = baseSlug;
-    let counter = 1;
+    const totalPages = Math.ceil(totalCount / limit);
 
-    while (await prisma.project.findUnique({ where: { slug } })) {
-      slug = `${baseSlug}-${counter}`;
-      counter++;
-    }
-
-    const project = await prisma.project.create({
-      data: {
-        name: data.name,
-        slug,
-        intakeData: data,
-        clientId: client.id,
-        ownerId: session.user.id,
-        status: 'INTAKE',
-        // Store target codebase if this is a bug fix / enhancement
-        targetCodebase: data.targetCodebase || null,
+    return NextResponse.json({
+      projects,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalCount,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
       },
-      include: { client: true },
     });
 
-    // Only create project folder structure for NEW projects (not bug fixes/enhancements)
-    if (!data.targetCodebase) {
-      try {
-        await createProjectFolder(slug, data.name, client.name, data);
-        console.log(`[Projects] Created folder for project: ${slug}`);
-      } catch (folderError) {
-        console.error(`[Projects] Failed to create folder for ${slug}:`, folderError);
-        // Don't fail the request - folder creation is secondary
-      }
-    } else {
-      console.log(`[Projects] Using existing codebase: ${data.targetCodebase} (no new folder created)`);
-    }
-
-    // Sync knowledge base (fire and forget)
-    syncKnowledgeBase().catch(err => console.error('[Projects] Knowledge sync failed:', err));
-
-    return NextResponse.json(project, { status: 201 });
   } catch (error) {
-    console.error('Failed to create project:', error);
+    console.error('Error fetching projects:', error);
+    
+    if (error instanceof Error) {
+      return NextResponse.json(
+        { 
+          error: 'Failed to fetch projects', 
+          code: 'DATABASE_ERROR',
+          message: process.env.NODE_ENV === 'development' ? error.message : undefined 
+        }, 
+        { status: 500 }
+      );
+    }
+    
     return NextResponse.json(
-      { error: 'Failed to create project' },
+      { error: 'Internal server error', code: 'UNKNOWN_ERROR' }, 
       { status: 500 }
     );
   }
 }
 
-export async function GET() {
+export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: 'Unauthorized', code: 'AUTH_REQUIRED' }, 
+        { status: 401 }
+      );
     }
 
-    const projects = await prisma.project.findMany({
-      where: { ownerId: session.user.id },
-      include: { client: true },
-      orderBy: { updatedAt: 'desc' },
+    const body = await request.json();
+    
+    // Validate request body
+    const validationResult = createProjectSchema.safeParse(body);
+    if (!validationResult.success) {
+      return NextResponse.json(
+        { 
+          error: 'Invalid project data', 
+          code: 'VALIDATION_ERROR',
+          details: validationResult.error.errors 
+        }, 
+        { status: 400 }
+      );
+    }
+
+    const { name, description } = validationResult.data;
+
+    // Check for duplicate project names for this user
+    const existingProject = await prisma.project.findFirst({
+      where: {
+        userId: session.user.id,
+        name,
+        status: { not: ProjectStatus.FINISHED }, // Allow same name if previous is finished
+      },
     });
 
-    return NextResponse.json(projects);
+    if (existingProject) {
+      return NextResponse.json(
+        { 
+          error: 'A project with this name already exists', 
+          code: 'DUPLICATE_NAME',
+          field: 'name' 
+        }, 
+        { status: 409 }
+      );
+    }
+
+    // Create project and initial status history in a transaction
+    const project = await prisma.$transaction(async (tx) => {
+      const newProject = await tx.project.create({
+        data: {
+          name,
+          description,
+          status: ProjectStatus.IN_PROGRESS,
+          userId: session.user.id,
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+      // Create initial status history entry
+      await tx.projectStatusHistory.create({
+        data: {
+          projectId: newProject.id,
+          oldStatus: null,
+          newStatus: ProjectStatus.IN_PROGRESS,
+          changedBy: session.user.id,
+        },
+      });
+
+      return newProject;
+    });
+
+    return NextResponse.json(project, { status: 201 });
+
   } catch (error) {
-    console.error('Failed to fetch projects:', error);
+    console.error('Error creating project:', error);
+    
+    if (error instanceof Error) {
+      return NextResponse.json(
+        { 
+          error: 'Failed to create project', 
+          code: 'DATABASE_ERROR',
+          message: process.env.NODE_ENV === 'development' ? error.message : undefined 
+        }, 
+        { status: 500 }
+      );
+    }
+    
     return NextResponse.json(
-      { error: 'Failed to fetch projects' },
+      { error: 'Internal server error', code: 'UNKNOWN_ERROR' }, 
       { status: 500 }
     );
   }

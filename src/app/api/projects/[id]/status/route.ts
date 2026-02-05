@@ -1,102 +1,274 @@
-import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions, canAccessProject } from '@/lib/auth/config';
-import { prisma } from '@/lib/db/prisma';
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+import { ProjectStatus } from '@prisma/client';
+import { 
+  validateStatusTransition, 
+  isValidProjectStatus,
+  ProjectStatusTransitionError,
+} from '@/lib/project-utils';
+import { z } from 'zod';
 
-/**
- * GET /api/projects/[id]/status
- *
- * Get real-time status updates for a project.
- * Used for polling during autonomous implementation.
- */
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+const updateStatusSchema = z.object({
+  status: z.string().refine(isValidProjectStatus, {
+    message: `Invalid status. Must be one of: ${Object.values(ProjectStatus).join(', ')}`,
+  }),
+});
+
+interface RouteParams {
+  params: {
+    id: string;
+  };
+}
+
+export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: 'Unauthorized', code: 'AUTH_REQUIRED' }, 
+        { status: 401 }
+      );
     }
 
-    const { id } = await params;
-    const { searchParams } = new URL(request.url);
-    const since = searchParams.get('since');
-    const limit = parseInt(searchParams.get('limit') || '20', 10);
+    const { id } = params;
 
-    const project = await prisma.project.findUnique({
-      where: { id },
-      select: { id: true, name: true, status: true, ownerId: true, implementerId: true },
-    });
-
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    // Validate project ID format (assuming CUID)
+    if (!id || typeof id !== 'string') {
+      return NextResponse.json(
+        { error: 'Invalid project ID', code: 'INVALID_ID' }, 
+        { status: 400 }
+      );
     }
 
-    if (!canAccessProject(project, session.user.id)) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    const body = await request.json();
+    
+    // Validate request body
+    const validationResult = updateStatusSchema.safeParse(body);
+    if (!validationResult.success) {
+      return NextResponse.json(
+        { 
+          error: 'Invalid status data', 
+          code: 'VALIDATION_ERROR',
+          details: validationResult.error.errors 
+        }, 
+        { status: 400 }
+      );
     }
 
-    // Fetch recent status updates
-    const updates = await prisma.conversation.findMany({
+    const newStatus = validationResult.data.status as ProjectStatus;
+
+    // First, verify the project exists and user owns it
+    const existingProject = await prisma.project.findFirst({
       where: {
-        projectId: id,
-        type: 'status_update',
-        ...(since ? { createdAt: { gt: new Date(since) } } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-      select: {
-        id: true,
-        role: true,
-        input: true,
-        output: true,
-        createdAt: true,
+        id,
+        userId: session.user.id,
       },
     });
 
-    // Get active sprint
-    const activeSprint = await prisma.sprint.findFirst({
-      where: {
-        projectId: id,
-        status: 'IN_PROGRESS',
-      },
-      select: {
-        id: true,
-        number: true,
-        name: true,
-        status: true,
-        startedAt: true,
-      },
-    });
+    if (!existingProject) {
+      return NextResponse.json(
+        { error: 'Project not found', code: 'NOT_FOUND' }, 
+        { status: 404 }
+      );
+    }
 
-    // Check if there's an active implementation running
-    // (by looking at recent status updates)
-    const recentUpdate = updates[0];
-    const isRunning =
-      recentUpdate &&
-      new Date().getTime() - new Date(recentUpdate.createdAt).getTime() <
-        60000; // Within last minute
+    // Check if status is already the target status
+    if (existingProject.status === newStatus) {
+      return NextResponse.json(
+        { 
+          error: 'Project already has this status', 
+          code: 'NO_CHANGE_REQUIRED',
+          currentStatus: existingProject.status 
+        }, 
+        { status: 400 }
+      );
+    }
+
+    // Validate status transition
+    try {
+      validateStatusTransition(existingProject.status, newStatus);
+    } catch (error) {
+      if (error instanceof ProjectStatusTransitionError) {
+        return NextResponse.json(
+          { 
+            error: error.message, 
+            code: 'INVALID_TRANSITION',
+            currentStatus: error.currentStatus,
+            targetStatus: error.targetStatus 
+          }, 
+          { status: 400 }
+        );
+      }
+      throw error; // Re-throw if it's not a transition error
+    }
+
+    // Update project status and create history record in a transaction
+    const updatedProject = await prisma.$transaction(async (tx) => {
+      // Check for concurrent updates by comparing updatedAt
+      const currentProject = await tx.project.findUnique({
+        where: { id },
+        select: { status: true, updatedAt: true },
+      });
+
+      if (!currentProject) {
+        throw new Error('Project not found during transaction');
+      }
+
+      if (currentProject.status !== existingProject.status) {
+        throw new Error('Project status was modified by another user. Please refresh and try again.');
+      }
+
+      // Update the project
+      const project = await tx.project.update({
+        where: { id },
+        data: {
+          status: newStatus,
+          ...(newStatus === ProjectStatus.FINISHED && { archivedAt: new Date() }),
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+      // Create status history record
+      await tx.projectStatusHistory.create({
+        data: {
+          projectId: id,
+          oldStatus: existingProject.status,
+          newStatus,
+          changedBy: session.user.id,
+        },
+      });
+
+      return project;
+    });
 
     return NextResponse.json({
-      projectId: id,
-      projectName: project.name,
-      projectStatus: project.status,
-      activeSprint,
-      isRunning,
-      updates: updates.map((u) => ({
-        id: u.id,
-        role: u.role,
-        status: (u.input as { status?: string })?.status || 'unknown',
-        details: u.output,
-        timestamp: u.createdAt,
-      })),
-      lastUpdate: recentUpdate?.createdAt || null,
+      project: updatedProject,
+      message: `Project status updated to ${newStatus}`,
     });
+
   } catch (error) {
-    console.error('Failed to get project status:', error);
+    console.error('Error updating project status:', error);
+    
+    if (error instanceof Error) {
+      // Handle specific error types
+      if (error.message.includes('concurrent') || error.message.includes('modified by another user')) {
+        return NextResponse.json(
+          { 
+            error: error.message, 
+            code: 'CONCURRENT_UPDATE' 
+          }, 
+          { status: 409 }
+        );
+      }
+
+      if (error.message.includes('not found during transaction')) {
+        return NextResponse.json(
+          { 
+            error: 'Project not found', 
+            code: 'NOT_FOUND' 
+          }, 
+          { status: 404 }
+        );
+      }
+
+      return NextResponse.json(
+        { 
+          error: 'Failed to update project status', 
+          code: 'DATABASE_ERROR',
+          message: process.env.NODE_ENV === 'development' ? error.message : undefined 
+        }, 
+        { status: 500 }
+      );
+    }
+    
     return NextResponse.json(
-      { error: 'Failed to get project status' },
+      { error: 'Internal server error', code: 'UNKNOWN_ERROR' }, 
+      { status: 500 }
+    );
+  }
+}
+
+export async function GET(request: NextRequest, { params }: RouteParams) {
+  try {
+    const session = await getServerSession(authOptions);
+    
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: 'Unauthorized', code: 'AUTH_REQUIRED' }, 
+        { status: 401 }
+      );
+    }
+
+    const { id } = params;
+
+    if (!id || typeof id !== 'string') {
+      return NextResponse.json(
+        { error: 'Invalid project ID', code: 'INVALID_ID' }, 
+        { status: 400 }
+      );
+    }
+
+    // Get project status history
+    const statusHistory = await prisma.projectStatusHistory.findMany({
+      where: {
+        project: {
+          id,
+          userId: session.user.id, // Ensure user owns the project
+        },
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: { changedAt: 'desc' },
+    });
+
+    if (statusHistory.length === 0) {
+      // Check if project exists but user doesn't own it
+      const projectExists = await prisma.project.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+
+      if (!projectExists) {
+        return NextResponse.json(
+          { error: 'Project not found', code: 'NOT_FOUND' }, 
+          { status: 404 }
+        );
+      } else {
+        return NextResponse.json(
+          { error: 'Unauthorized to view this project', code: 'UNAUTHORIZED' }, 
+          { status: 403 }
+        );
+      }
+    }
+
+    return NextResponse.json({ statusHistory });
+
+  } catch (error) {
+    console.error('Error fetching project status history:', error);
+    
+    return NextResponse.json(
+      { 
+        error: 'Failed to fetch status history', 
+        code: 'DATABASE_ERROR',
+        message: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined 
+      }, 
       { status: 500 }
     );
   }
