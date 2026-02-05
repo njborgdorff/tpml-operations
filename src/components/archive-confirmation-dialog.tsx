@@ -49,11 +49,12 @@ export function ArchiveConfirmationDialog({
     try {
       setError(null)
       await onConfirm()
-      onClose()
+      // Only close dialog on success - onConfirm should handle success
     } catch (error) {
       // Keep dialog open and show error
       const errorMessage = error instanceof Error ? error.message : 'Failed to archive project'
       setError(errorMessage)
+      // Don't close dialog on error - let user try again or cancel
     }
   }
 
@@ -62,8 +63,15 @@ export function ArchiveConfirmationDialog({
     onClose()
   }
 
+  // Prevent closing dialog when loading or if there's an error being displayed
+  const handleOpenChange = (open: boolean) => {
+    if (!open && !isLoading) {
+      handleClose()
+    }
+  }
+
   return (
-    <AlertDialog open={isOpen} onOpenChange={handleClose}>
+    <AlertDialog open={isOpen} onOpenChange={handleOpenChange}>
       <AlertDialogContent className="max-w-md">
         <AlertDialogHeader>
           <div className="flex items-center gap-2">
@@ -87,7 +95,7 @@ export function ArchiveConfirmationDialog({
 
             {error && (
               <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 p-3 rounded-lg border border-red-200">
-                <AlertCircle className="h-4 w-4" />
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />
                 <span>{error}</span>
               </div>
             )}

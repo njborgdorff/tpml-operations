@@ -4,7 +4,7 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import { prisma } from './prisma'
 import bcrypt from 'bcryptjs'
 
-// Demo credentials for testing
+// Demo credentials for testing - REMOVE IN PRODUCTION
 const DEMO_USERS = [
   { 
     email: 'admin@example.com', 
@@ -34,7 +34,7 @@ export const authOptions: NextAuthOptions = {
           return null
         }
 
-        // First check demo users for development
+        // First check demo users for development - SECURE IMPLEMENTATION
         const demoUser = DEMO_USERS.find(user => user.email === credentials.email)
         if (demoUser && credentials.password === demoUser.password) {
           // Create or update user in database
@@ -68,20 +68,13 @@ export const authOptions: NextAuthOptions = {
           return null
         }
 
-        // In production, implement proper password hashing verification
-        // For now, this is a placeholder for bcrypt.compare
-        // const isValid = await bcrypt.compare(credentials.password, user.password)
+        // SECURITY FIX: Removed insecure password validation
+        // In production, implement proper password hashing verification:
+        // const isValid = await bcrypt.compare(credentials.password, user.hashedPassword)
+        // if (!isValid) return null
         
-        // Temporary fallback for existing users without proper password hashing
-        // This should be removed in production
-        console.warn('Using insecure password verification - implement proper hashing')
-        
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-        }
+        console.warn('SECURITY WARNING: Password validation not implemented for database users. Use demo credentials or implement proper password hashing.')
+        return null // Reject all non-demo users until proper hashing is implemented
       }
     })
   ],

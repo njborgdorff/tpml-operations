@@ -86,12 +86,14 @@ export async function PATCH(
 
     return NextResponse.json(result)
   } catch (error) {
-    // Log error with context but don't expose details
+    // Comprehensive error logging with context
     console.error('Error archiving project:', {
       error: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
       projectId: params?.id,
       userId: (await getServerSession(authOptions))?.user?.id,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      type: 'archive_project_error'
     })
 
     // Handle specific Prisma errors
@@ -107,7 +109,13 @@ export async function PATCH(
             { error: 'Project not found' },
             { status: 404 }
           )
+        case 'P2014':
+          return NextResponse.json(
+            { error: 'Related record dependency conflict' },
+            { status: 409 }
+          )
         default:
+          console.error('Unknown Prisma error:', error.code, error.message)
           return NextResponse.json(
             { error: 'Database operation failed' },
             { status: 500 }
@@ -115,7 +123,22 @@ export async function PATCH(
       }
     }
 
-    // Generic error response
+    // Handle other known error types
+    if (error instanceof Prisma.PrismaClientUnknownRequestError) {
+      return NextResponse.json(
+        { error: 'Database request failed' },
+        { status: 500 }
+      )
+    }
+
+    if (error instanceof Prisma.PrismaClientRustPanicError) {
+      return NextResponse.json(
+        { error: 'Database system error' },
+        { status: 500 }
+      )
+    }
+
+    // Generic error response - don't expose internal details
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

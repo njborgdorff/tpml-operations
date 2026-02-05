@@ -68,6 +68,8 @@ export function ProjectContextMenu({
         description: `"${project.name}" has been moved to Finished.`,
       })
 
+      // Close dialog and refresh on success
+      setIsArchiveDialogOpen(false)
       onRefresh?.()
     } catch (error) {
       // Re-throw to let dialog handle it
@@ -157,7 +159,7 @@ export function ProjectContextMenu({
               <DropdownMenuSeparator />
               <DropdownMenuItem 
                 onClick={() => setIsArchiveDialogOpen(true)}
-                className="text-orange-600"
+                className="text-orange-600 focus:text-orange-600"
               >
                 <Archive className="h-4 w-4 mr-2" />
                 Move to Finished
@@ -170,7 +172,7 @@ export function ProjectContextMenu({
               <DropdownMenuSeparator />
               <DropdownMenuItem 
                 onClick={() => onDelete(project.id)}
-                className="text-red-600"
+                className="text-red-600 focus:text-red-600"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
                 Delete Project
