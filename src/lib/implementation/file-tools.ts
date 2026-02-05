@@ -280,7 +280,7 @@ export async function applyOperationsViaGitHub(
 
   try {
     // Get the current commit SHA for the branch
-    const branchResponse = await fetch(
+    let branchResponse = await fetch(
       `https://api.github.com/repos/${repo}/git/ref/heads/${branch}`,
       {
         headers: {
@@ -290,13 +290,62 @@ export async function applyOperationsViaGitHub(
       }
     );
 
-    if (!branchResponse.ok) {
-      const error = await branchResponse.text();
-      return { success: false, error: `Failed to get branch: ${error}` };
-    }
+    let baseCommitSha: string;
 
-    const branchData = await branchResponse.json();
-    const baseCommitSha = branchData.object.sha;
+    if (!branchResponse.ok) {
+      // Branch doesn't exist - try to create it from main or master
+      const defaultBranches = ['main', 'master'];
+      let defaultBranchSha: string | null = null;
+
+      for (const defaultBranch of defaultBranches) {
+        const defaultBranchResponse = await fetch(
+          `https://api.github.com/repos/${repo}/git/ref/heads/${defaultBranch}`,
+          {
+            headers: {
+              Authorization: `Bearer ${githubToken}`,
+              Accept: 'application/vnd.github.v3+json',
+            },
+          }
+        );
+
+        if (defaultBranchResponse.ok) {
+          const defaultBranchData = await defaultBranchResponse.json();
+          defaultBranchSha = defaultBranchData.object.sha;
+          break;
+        }
+      }
+
+      if (!defaultBranchSha) {
+        return { success: false, error: 'Could not find main or master branch to branch from' };
+      }
+
+      // Create the new branch
+      const createBranchResponse = await fetch(
+        `https://api.github.com/repos/${repo}/git/refs`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${githubToken}`,
+            Accept: 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            ref: `refs/heads/${branch}`,
+            sha: defaultBranchSha,
+          }),
+        }
+      );
+
+      if (!createBranchResponse.ok) {
+        const error = await createBranchResponse.text();
+        return { success: false, error: `Failed to create branch '${branch}': ${error}` };
+      }
+
+      baseCommitSha = defaultBranchSha;
+    } else {
+      const branchData = await branchResponse.json();
+      baseCommitSha = branchData.object.sha;
+    }
 
     // Get the base tree
     const commitResponse = await fetch(
