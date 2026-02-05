@@ -2199,10 +2199,27 @@ Keep your response focused on architecture validation. Be concise but thorough.`
 
       // If we have file operations, commit them to GitHub
       const githubRepo = process.env.GITHUB_REPO; // e.g., "owner/repo"
-      const targetRepo = (await prisma.project.findUnique({
+      const githubOwner = githubRepo?.split('/')[0]; // Extract owner from GITHUB_REPO
+
+      // Get project's target codebase
+      const projectTarget = (await prisma.project.findUnique({
         where: { id: projectId },
         select: { targetCodebase: true }
-      }))?.targetCodebase || githubRepo;
+      }))?.targetCodebase;
+
+      // Determine the target repo:
+      // - If targetCodebase contains '/', use it directly (it's already owner/repo format)
+      // - If targetCodebase is just a repo name, prefix with the owner from GITHUB_REPO
+      // - Otherwise fall back to GITHUB_REPO
+      let targetRepo: string | undefined;
+      if (projectTarget) {
+        if (projectTarget.includes('/')) {
+          targetRepo = projectTarget; // Already in owner/repo format
+        } else if (githubOwner) {
+          targetRepo = `${githubOwner}/${projectTarget}`; // Prefix with owner
+        }
+      }
+      targetRepo = targetRepo || githubRepo;
 
       let commitResult: { success: boolean; commitSha?: string; error?: string } = { success: false };
 
