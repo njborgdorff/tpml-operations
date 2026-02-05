@@ -10,25 +10,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum ProjectStatus {
-  IN_PROGRESS
-  COMPLETE
-  APPROVED
-  FINISHED
-}
-
-enum UserRole {
-  ADMIN
-  MANAGER
-  MEMBER
-}
-
 model Account {
   id                String  @id @default(cuid())
-  userId            String
+  userId            String  @map("user_id")
   type              String
   provider          String
-  providerAccountId String
+  providerAccountId String  @map("provider_account_id")
   refresh_token     String? @db.Text
   access_token      String? @db.Text
   expires_at        Int?
@@ -40,31 +27,37 @@ model Account {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@map("accounts")
 }
 
 model Session {
   id           String   @id @default(cuid())
-  sessionToken String   @unique
-  userId       String
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
 }
 
 model User {
   id            String    @id @default(cuid())
   name          String?
   email         String    @unique
-  password      String?
-  emailVerified DateTime?
+  password      String?   // Added for credentials auth
+  emailVerified DateTime? @map("email_verified")
   image         String?
-  role          UserRole  @default(MEMBER)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  role          Role      @default(USER)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  
+  accounts      Account[]
+  sessions      Session[]
+  projects      ProjectMember[]
+  tasks         Task[]
+  createdProjects Project[] @relation("ProjectCreator")
 
-  accounts              Account[]
-  sessions              Session[]
-  projects              Project[]
-  projectStatusChanges  ProjectStatusHistory[]
+  @@map("users")
 }
 
 model VerificationToken {
@@ -73,35 +66,83 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+  @@map("verificationtokens")
 }
 
 model Project {
-  id          String        @id @default(cuid())
+  id          String   @id @default(cuid())
   name        String
   description String?
-  status      ProjectStatus @default(IN_PROGRESS)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  archivedAt  DateTime?
-  userId      String
+  status      ProjectStatus @default(ACTIVE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdById String   @map("created_by_id")
+  
+  createdBy   User            @relation("ProjectCreator", fields: [createdById], references: [id])
+  members     ProjectMember[]
+  tasks       Task[]
 
-  user          User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  statusHistory ProjectStatusHistory[]
-
-  @@index([status])
-  @@index([userId])
+  @@map("projects")
 }
 
-model ProjectStatusHistory {
-  id        String        @id @default(cuid())
-  projectId String
-  oldStatus ProjectStatus?
-  newStatus ProjectStatus
-  changedAt DateTime      @default(now())
-  changedBy String
+model ProjectMember {
+  id        String      @id @default(cuid())
+  projectId String      @map("project_id")
+  userId    String      @map("user_id")
+  role      ProjectRole @default(MEMBER)
+  joinedAt  DateTime    @default(now()) @map("joined_at")
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user    User    @relation(fields: [changedBy], references: [id])
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([projectId])
+  @@unique([projectId, userId])
+  @@map("project_members")
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  title       String
+  description String?
+  status      TaskStatus @default(TODO)
+  priority    Priority   @default(MEDIUM)
+  projectId   String     @map("project_id")
+  assignedToId String?   @map("assigned_to_id")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  dueDate     DateTime?  @map("due_date")
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignedTo User?   @relation(fields: [assignedToId], references: [id])
+
+  @@map("tasks")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum ProjectStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum ProjectRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
 }
