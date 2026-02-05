@@ -1,60 +1,84 @@
-'use client'
+'use client';
 
-import { ProjectStatus } from '@/lib/types'
-import { getStatusLabel, canMoveToFinished } from '@/lib/utils'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { useState } from 'react';
+import { ProjectStatus } from '@/types/project';
+import { Button } from '@/components/ui/button';
 
 interface ProjectStatusSelectorProps {
-  currentStatus: ProjectStatus
-  onStatusChange: (status: ProjectStatus) => void
-  disabled?: boolean
+  currentStatus: ProjectStatus;
+  projectId: string;
+  onStatusUpdate: (projectId: string, newStatus: ProjectStatus) => Promise<void>;
 }
 
-export function ProjectStatusSelector({
-  currentStatus,
-  onStatusChange,
-  disabled = false
+export function ProjectStatusSelector({ 
+  currentStatus, 
+  projectId, 
+  onStatusUpdate 
 }: ProjectStatusSelectorProps) {
-  const getAvailableStatuses = () => {
-    switch (currentStatus) {
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const getNextStatus = (current: ProjectStatus): ProjectStatus | null => {
+    switch (current) {
       case ProjectStatus.IN_PROGRESS:
-        return [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE]
+        return ProjectStatus.COMPLETE;
       case ProjectStatus.COMPLETE:
-        return [ProjectStatus.COMPLETE, ProjectStatus.APPROVED, ProjectStatus.IN_PROGRESS]
+        return ProjectStatus.APPROVED;
       case ProjectStatus.APPROVED:
-        return [ProjectStatus.APPROVED, ProjectStatus.FINISHED, ProjectStatus.COMPLETE]
+        return ProjectStatus.FINISHED;
       case ProjectStatus.FINISHED:
-        return [ProjectStatus.FINISHED] // Cannot change finished projects
+        return null; // No further status
       default:
-        return [currentStatus]
+        return null;
     }
+  };
+
+  const getStatusActionLabel = (current: ProjectStatus): string => {
+    switch (current) {
+      case ProjectStatus.IN_PROGRESS:
+        return "Mark Complete";
+      case ProjectStatus.COMPLETE:
+        return "Mark Approved";
+      case ProjectStatus.APPROVED:
+        return "Move to Finished";
+      case ProjectStatus.FINISHED:
+        return "Already Finished";
+      default:
+        return "Update Status";
+    }
+  };
+
+  const handleStatusUpdate = async () => {
+    const nextStatus = getNextStatus(currentStatus);
+    if (!nextStatus) return;
+
+    setIsUpdating(true);
+    try {
+      await onStatusUpdate(projectId, nextStatus);
+    } catch (error) {
+      console.error('Failed to update status:', error);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const nextStatus = getNextStatus(currentStatus);
+  
+  if (!nextStatus) {
+    return (
+      <Button variant="secondary" disabled size="sm">
+        {getStatusActionLabel(currentStatus)}
+      </Button>
+    );
   }
 
-  const availableStatuses = getAvailableStatuses()
-  const isFinished = currentStatus === ProjectStatus.FINISHED
-
   return (
-    <Select
-      value={currentStatus}
-      onValueChange={(value) => onStatusChange(value as ProjectStatus)}
-      disabled={disabled || isFinished}
+    <Button
+      onClick={handleStatusUpdate}
+      disabled={isUpdating}
+      size="sm"
+      variant={currentStatus === ProjectStatus.APPROVED ? "destructive" : "default"}
     >
-      <SelectTrigger className="w-full">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {availableStatuses.map((status) => (
-          <SelectItem key={status} value={status}>
-            {getStatusLabel(status)}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  )
+      {isUpdating ? "Updating..." : getStatusActionLabel(currentStatus)}
+    </Button>
+  );
 }

@@ -1,55 +1,73 @@
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
-import { Project, ProjectFilter } from '@/types/project'
-import { getStoredFilter, setStoredFilter } from '@/lib/session-storage'
+import { useState, useEffect, useCallback } from 'react';
+import { Project, ProjectFilter, ProjectStatus, UpdateProjectStatusRequest } from '@/types/project';
 
 export function useProjects() {
-  const [projects, setProjects] = useState<Project[]>([])
-  const [filter, setFilterState] = useState<ProjectFilter>('ALL')
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<ProjectFilter>('active');
 
-  // Initialize filter from session storage
-  useEffect(() => {
-    const storedFilter = getStoredFilter()
-    setFilterState(storedFilter)
-  }, [])
-
-  // Fetch projects whenever filter changes
-  useEffect(() => {
-    fetchProjects()
-  }, [filter])
-
-  const setFilter = (newFilter: ProjectFilter) => {
-    setFilterState(newFilter)
-    setStoredFilter(newFilter)
-  }
-
-  const fetchProjects = async () => {
+  const fetchProjects = useCallback(async (currentFilter: ProjectFilter = filter) => {
     try {
-      setLoading(true)
-      setError(null)
+      setLoading(true);
+      setError(null);
       
-      const response = await fetch(`/api/projects?filter=${filter}`)
+      const queryParams = currentFilter !== 'all' ? `?filter=${currentFilter}` : '';
+      const response = await fetch(`/api/projects${queryParams}`);
       
       if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('You need to sign in to view projects')
-        }
-        throw new Error('Failed to fetch projects')
+        throw new Error('Failed to fetch projects');
       }
       
-      const data = await response.json()
-      setProjects(data)
+      const data = await response.json();
+      setProjects(data);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'An error occurred'
-      setError(errorMessage)
-      console.error('Error fetching projects:', err)
+      setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  }, [filter]);
+
+  const updateProjectStatus = async (projectId: string, newStatus: ProjectStatus) => {
+    try {
+      const response = await fetch(`/api/projects/${projectId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: newStatus } satisfies UpdateProjectStatusRequest),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update project status');
+      }
+
+      const updatedProject = await response.json();
+      
+      // Update the project in the local state
+      setProjects(prev => 
+        prev.map(p => p.id === projectId ? updatedProject : p)
+      );
+
+      // If the project was moved to finished and we're viewing active projects,
+      // remove it from the list
+      if (newStatus === ProjectStatus.FINISHED && filter === 'active') {
+        setProjects(prev => prev.filter(p => p.id !== projectId));
+      }
+      
+      // If we're viewing finished projects and a project was moved out of finished,
+      // remove it from the list
+      if (newStatus !== ProjectStatus.FINISHED && filter === 'finished') {
+        setProjects(prev => prev.filter(p => p.id !== projectId));
+      }
+
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update project');
+      throw err; // Re-throw to handle in component
+    }
+  };
 
   const createProject = async (name: string, description?: string) => {
     try {
@@ -59,104 +77,53 @@ export function useProjects() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ name, description }),
-      })
+      });
 
       if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('You need to sign in to create projects')
-        }
-        throw new Error('Failed to create project')
+        throw new Error('Failed to create project');
       }
 
-      const newProject = await response.json()
+      const newProject = await response.json();
       
-      // Add to the current projects list if it matches the current filter
-      if (filter === 'ALL' || filter === 'ACTIVE' || filter === 'IN_PROGRESS') {
-        setProjects(prev => [newProject, ...prev])
+      // Add to projects list if it matches current filter
+      if (filter === 'all' || filter === 'active') {
+        setProjects(prev => [newProject, ...prev]);
       }
       
-      return newProject
+      return newProject;
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to create project'
-      setError(errorMessage)
-      throw err
+      setError(err instanceof Error ? err.message : 'Failed to create project');
+      throw err;
     }
-  }
+  };
 
-  const updateProjectStatus = async (projectId: string, newStatus: string) => {
-    try {
-      const response = await fetch(`/api/projects/${projectId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status: newStatus }),
-      })
+  const changeFilter = useCallback((newFilter: ProjectFilter) => {
+    setFilter(newFilter);
+    fetchProjects(newFilter);
+  }, [fetchProjects]);
 
-      if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('You need to sign in to update projects')
-        }
-        if (response.status === 403) {
-          throw new Error('You do not have permission to update this project')
-        }
-        throw new Error('Failed to update project status')
-      }
+  // Calculate project counts for filter display
+  const projectCounts = {
+    all: projects.length,
+    active: projects.filter(p => 
+      p.status === ProjectStatus.IN_PROGRESS || p.status === ProjectStatus.COMPLETE
+    ).length,
+    finished: projects.filter(p => p.status === ProjectStatus.FINISHED).length,
+  };
 
-      const updatedProject = await response.json()
-      
-      // Update the project in the current list
-      setProjects(prev => 
-        prev.map(project => 
-          project.id === projectId ? updatedProject : project
-        )
-      )
-      
-      // If the updated project no longer matches the current filter, remove it from the list
-      const shouldRemove = checkIfProjectShouldBeRemovedFromFilter(updatedProject, filter)
-      if (shouldRemove) {
-        setProjects(prev => prev.filter(project => project.id !== projectId))
-      }
-      
-      return updatedProject
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to update project status'
-      setError(errorMessage)
-      throw err
-    }
-  }
-
-  const refreshProjects = () => {
-    fetchProjects()
-  }
+  useEffect(() => {
+    fetchProjects();
+  }, []);
 
   return {
     projects,
-    filter,
-    setFilter,
     loading,
     error,
-    createProject,
+    filter,
+    projectCounts,
     updateProjectStatus,
-    refreshProjects,
-  }
-}
-
-// Helper function to determine if a project should be removed from the current filter view
-function checkIfProjectShouldBeRemovedFromFilter(project: Project, currentFilter: ProjectFilter): boolean {
-  switch (currentFilter) {
-    case 'ACTIVE':
-      return !['IN_PROGRESS', 'COMPLETE'].includes(project.status)
-    case 'FINISHED':
-      return project.status !== 'ARCHIVED'
-    case 'IN_PROGRESS':
-      return project.status !== 'IN_PROGRESS'
-    case 'COMPLETE':
-      return project.status !== 'COMPLETE'
-    case 'APPROVED':
-      return project.status !== 'APPROVED'
-    case 'ALL':
-    default:
-      return false
-  }
+    createProject,
+    changeFilter,
+    refetch: fetchProjects,
+  };
 }

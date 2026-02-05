@@ -1,67 +1,44 @@
-'use client'
+'use client';
 
-import { ProjectFilter as ProjectFilterType } from '@/types/project'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { ProjectFilter } from '@/types/project';
+import { Button } from '@/components/ui/button';
 
 interface ProjectFilterProps {
-  filter: ProjectFilterType
-  onFilterChange: (filter: ProjectFilterType) => void
-  projectCounts?: {
-    all: number
-    active: number
-    finished: number
-    inProgress: number
-    complete: number
-    approved: number
-  }
+  currentFilter: ProjectFilter;
+  onFilterChange: (filter: ProjectFilter) => void;
+  projectCounts: {
+    all: number;
+    active: number;
+    finished: number;
+  };
 }
 
-const FILTER_LABELS: Record<ProjectFilterType, string> = {
-  ALL: 'All Projects',
-  ACTIVE: 'Active Projects',
-  FINISHED: 'Finished Projects',
-  IN_PROGRESS: 'In Progress',
-  COMPLETE: 'Complete',
-  APPROVED: 'Approved'
-}
-
-export function ProjectFilter({ filter, onFilterChange, projectCounts }: ProjectFilterProps) {
-  const getFilterLabel = (filterType: ProjectFilterType): string => {
-    const baseLabel = FILTER_LABELS[filterType]
-    if (!projectCounts) return baseLabel
-    
-    const getCount = () => {
-      switch (filterType) {
-        case 'ALL': return projectCounts.all
-        case 'ACTIVE': return projectCounts.active
-        case 'FINISHED': return projectCounts.finished
-        case 'IN_PROGRESS': return projectCounts.inProgress
-        case 'COMPLETE': return projectCounts.complete
-        case 'APPROVED': return projectCounts.approved
-        default: return 0
-      }
-    }
-    
-    const count = getCount()
-    return `${baseLabel} (${count})`
-  }
+export function ProjectFilterComponent({ 
+  currentFilter, 
+  onFilterChange, 
+  projectCounts 
+}: ProjectFilterProps) {
+  const filters: { key: ProjectFilter; label: string; count: number }[] = [
+    { key: 'all', label: 'All Projects', count: projectCounts.all },
+    { key: 'active', label: 'Active', count: projectCounts.active },
+    { key: 'finished', label: 'Finished', count: projectCounts.finished },
+  ];
 
   return (
-    <div className="flex items-center gap-2">
-      <label className="text-sm font-medium">Filter:</label>
-      <Select value={filter} onValueChange={onFilterChange}>
-        <SelectTrigger className="w-[200px]">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="ALL">{getFilterLabel('ALL')}</SelectItem>
-          <SelectItem value="ACTIVE">{getFilterLabel('ACTIVE')}</SelectItem>
-          <SelectItem value="FINISHED">{getFilterLabel('FINISHED')}</SelectItem>
-          <SelectItem value="IN_PROGRESS">{getFilterLabel('IN_PROGRESS')}</SelectItem>
-          <SelectItem value="COMPLETE">{getFilterLabel('COMPLETE')}</SelectItem>
-          <SelectItem value="APPROVED">{getFilterLabel('APPROVED')}</SelectItem>
-        </SelectContent>
-      </Select>
+    <div className="flex gap-2 mb-6">
+      {filters.map((filter) => (
+        <Button
+          key={filter.key}
+          variant={currentFilter === filter.key ? 'default' : 'outline'}
+          onClick={() => onFilterChange(filter.key)}
+          className="flex items-center gap-2"
+        >
+          {filter.label}
+          <span className="bg-white/20 px-2 py-0.5 rounded-full text-xs">
+            {filter.count}
+          </span>
+        </Button>
+      ))}
     </div>
-  )
+  );
 }
