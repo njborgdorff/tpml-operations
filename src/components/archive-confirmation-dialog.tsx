@@ -12,7 +12,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { Calendar, Archive } from 'lucide-react'
+import { Calendar, Archive, AlertCircle } from 'lucide-react'
 
 interface Project {
   id: string
@@ -35,6 +35,8 @@ export function ArchiveConfirmationDialog({
   project,
   isLoading = false
 }: ArchiveConfirmationDialogProps) {
+  const [error, setError] = useState<string | null>(null)
+
   if (!project) return null
 
   const currentDate = new Date().toLocaleDateString('en-US', {
@@ -45,16 +47,23 @@ export function ArchiveConfirmationDialog({
 
   const handleConfirm = async () => {
     try {
+      setError(null)
       await onConfirm()
       onClose()
     } catch (error) {
-      // Error handling will be done by parent component
-      console.error('Archive confirmation error:', error)
+      // Keep dialog open and show error
+      const errorMessage = error instanceof Error ? error.message : 'Failed to archive project'
+      setError(errorMessage)
     }
   }
 
+  const handleClose = () => {
+    setError(null)
+    onClose()
+  }
+
   return (
-    <AlertDialog open={isOpen} onOpenChange={onClose}>
+    <AlertDialog open={isOpen} onOpenChange={handleClose}>
       <AlertDialogContent className="max-w-md">
         <AlertDialogHeader>
           <div className="flex items-center gap-2">
@@ -75,11 +84,18 @@ export function ArchiveConfirmationDialog({
               This project will be moved to the Finished folder and displayed in read-only mode. 
               You can still view the project details, but it will no longer appear in your active projects.
             </div>
+
+            {error && (
+              <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 p-3 rounded-lg border border-red-200">
+                <AlertCircle className="h-4 w-4" />
+                <span>{error}</span>
+              </div>
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isLoading}>
+          <AlertDialogCancel onClick={handleClose} disabled={isLoading}>
             Cancel
           </AlertDialogCancel>
           <AlertDialogAction

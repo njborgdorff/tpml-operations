@@ -1,42 +1,38 @@
-export enum ProjectStatus {
-  IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETE = 'COMPLETE',
-  APPROVED = 'APPROVED',
-  FINISHED = 'FINISHED'
-}
+export type ProjectStatus = 'IN_PROGRESS' | 'COMPLETE' | 'APPROVED' | 'FINISHED'
 
-export interface Project {
+export interface User {
   id: string
-  name: string
-  description?: string
-  status: ProjectStatus
-  archivedAt?: Date
-  userId: string
-  createdAt: Date
-  updatedAt: Date
-  user: {
-    id: string
-    name?: string
-    email: string
-  }
-  statusHistory?: ProjectStatusHistory[]
+  name: string | null
+  email: string
 }
 
 export interface ProjectStatusHistory {
   id: string
   projectId: string
-  oldStatus?: ProjectStatus
+  oldStatus: ProjectStatus | null
   newStatus: ProjectStatus
+  changedAt: string
   changedBy: string
-  changedAt: Date
-  user: {
-    id: string
-    name?: string
-    email: string
-  }
 }
 
-export interface ProjectFilters {
-  status?: ProjectStatus[]
-  showArchived?: boolean
+export interface Project {
+  id: string
+  name: string
+  description: string | null
+  status: ProjectStatus
+  createdAt: string
+  updatedAt: string
+  archivedAt: string | null
+  userId: string
+  user: User
+  statusHistory?: ProjectStatusHistory[]
+}
+
+export interface CreateProjectData {
+  name: string
+  description?: string
+}
+
+export interface UpdateProjectStatusData {
+  status: ProjectStatus
 }

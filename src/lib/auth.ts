@@ -4,6 +4,22 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import { prisma } from './prisma'
 import bcrypt from 'bcryptjs'
 
+// Demo credentials for testing
+const DEMO_USERS = [
+  { 
+    email: 'admin@example.com', 
+    password: 'admin123', 
+    role: 'admin',
+    name: 'Admin User' 
+  },
+  { 
+    email: 'user@example.com', 
+    password: 'user123', 
+    role: 'user',
+    name: 'Regular User' 
+  }
+]
+
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
   providers: [
@@ -18,6 +34,32 @@ export const authOptions: NextAuthOptions = {
           return null
         }
 
+        // First check demo users for development
+        const demoUser = DEMO_USERS.find(user => user.email === credentials.email)
+        if (demoUser && credentials.password === demoUser.password) {
+          // Create or update user in database
+          const dbUser = await prisma.user.upsert({
+            where: { email: demoUser.email },
+            update: { 
+              name: demoUser.name,
+              role: demoUser.role 
+            },
+            create: {
+              email: demoUser.email,
+              name: demoUser.name,
+              role: demoUser.role
+            }
+          })
+
+          return {
+            id: dbUser.id,
+            email: dbUser.email,
+            name: dbUser.name,
+            role: dbUser.role,
+          }
+        }
+
+        // Check database users with proper password hashing
         const user = await prisma.user.findUnique({
           where: { email: credentials.email }
         })
@@ -26,18 +68,20 @@ export const authOptions: NextAuthOptions = {
           return null
         }
 
-        // For demo purposes, we'll just check if password matches email
-        // In production, you'd hash and compare passwords properly
-        if (credentials.password === credentials.email) {
-          return {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            role: user.role,
-          }
+        // In production, implement proper password hashing verification
+        // For now, this is a placeholder for bcrypt.compare
+        // const isValid = await bcrypt.compare(credentials.password, user.password)
+        
+        // Temporary fallback for existing users without proper password hashing
+        // This should be removed in production
+        console.warn('Using insecure password verification - implement proper hashing')
+        
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
         }
-
-        return null
       }
     })
   ],

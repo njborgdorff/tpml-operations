@@ -20,12 +20,7 @@ import {
 } from 'lucide-react'
 import { ArchiveConfirmationDialog } from './archive-confirmation-dialog'
 import { useToast } from '@/hooks/use-toast'
-
-interface Project {
-  id: string
-  name: string
-  status: 'IN_PROGRESS' | 'COMPLETE' | 'APPROVED' | 'FINISHED'
-}
+import { Project, ProjectStatus } from '@/types/project'
 
 interface ProjectContextMenuProps {
   project: Project
@@ -75,11 +70,8 @@ export function ProjectContextMenu({
 
       onRefresh?.()
     } catch (error) {
-      toast({
-        title: 'Archive Failed',
-        description: error instanceof Error ? error.message : 'Failed to archive project',
-        variant: 'destructive',
-      })
+      // Re-throw to let dialog handle it
+      throw error
     } finally {
       setIsArchiving(false)
     }
@@ -159,26 +151,26 @@ export function ProjectContextMenu({
               </DropdownMenuItem>
             </>
           )}
-          
+
           {canArchive && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem 
                 onClick={() => setIsArchiveDialogOpen(true)}
-                className="text-orange-600 focus:text-orange-600"
+                className="text-orange-600"
               >
                 <Archive className="h-4 w-4 mr-2" />
                 Move to Finished
               </DropdownMenuItem>
             </>
           )}
-          
+
           {onDelete && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem 
                 onClick={() => onDelete(project.id)}
-                className="text-destructive focus:text-destructive"
+                className="text-red-600"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
                 Delete Project
