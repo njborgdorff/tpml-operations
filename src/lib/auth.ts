@@ -1,40 +1,77 @@
-import { NextAuthOptions } from "next-auth";
-import { PrismaAdapter } from "@next-auth/prisma-adapter";
-import GithubProvider from "next-auth/providers/github";
-import GoogleProvider from "next-auth/providers/google";
-import { prisma } from "@/lib/prisma";
+import { NextAuthOptions, getServerSession } from 'next-auth'
+import { PrismaAdapter } from '@next-auth/prisma-adapter'
+import EmailProvider from 'next-auth/providers/email'
+import { prisma } from '@/lib/db'
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
   providers: [
-    GithubProvider({
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+    EmailProvider({
+      server: {
+        host: process.env.EMAIL_SERVER_HOST,
+        port: process.env.EMAIL_SERVER_PORT,
+        auth: {
+          user: process.env.EMAIL_SERVER_USER,
+          pass: process.env.EMAIL_SERVER_PASSWORD,
+        },
+      },
+      from: process.env.EMAIL_FROM,
     }),
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
+    // For development, we'll also add a credentials provider
+    {
+      id: 'credentials',
+      name: 'Credentials',
+      type: 'credentials',
+      credentials: {
+        email: { label: 'Email', type: 'email' },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email) return null
+        
+        // In development, allow any of our test emails
+        const testEmails = ['john@example.com', 'jane@example.com', 'admin@example.com']
+        
+        if (testEmails.includes(credentials.email)) {
+          const user = await prisma.user.findUnique({
+            where: { email: credentials.email },
+          })
+          
+          if (user) {
+            return {
+              id: user.id,
+              email: user.email,
+              name: user.name,
+              role: user.role,
+            }
+          }
+        }
+        
+        return null
+      },
+    },
   ],
   session: {
-    strategy: "jwt",
+    strategy: 'jwt',
   },
   callbacks: {
-    session: ({ session, token }) => {
-      if (session?.user && token?.sub) {
-        session.user.id = token.sub;
-      }
-      return session;
-    },
-    jwt: ({ user, token }) => {
+    async jwt({ token, user }) {
       if (user) {
-        token.uid = user.id;
+        token.role = (user as any).role
       }
-      return token;
+      return token
+    },
+    async session({ session, token }) {
+      if (session.user) {
+        (session.user as any).id = token.sub
+        ;(session.user as any).role = token.role
+      }
+      return session
     },
   },
   pages: {
-    signIn: "/auth/signin",
-    error: "/auth/error",
+    signIn: '/auth/signin',
+    error: '/auth/error',
   },
-};
+}
+
+export const getAuthSession = () => getServerSession(authOptions)

@@ -10,51 +10,52 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
 model User {
-  id       String @id @default(cuid())
-  email    String @unique
-  name     String?
-  role     String @default("USER")
-  
-  projects          Project[]
-  statusChanges     ProjectStatusHistory[]
-  
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("users")
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  role          String    @default("user")
+  accounts      Account[]
+  sessions      Session[]
+  projects      Project[]
+  statusChanges ProjectStatusHistory[]
 }
 
-model Project {
-  id          String        @id @default(cuid())
-  name        String
-  description String?
-  status      ProjectStatus @default(IN_PROGRESS)
-  archivedAt  DateTime?
-  userId      String
-  
-  user          User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  statusHistory ProjectStatusHistory[]
-  
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
 
-  @@map("projects")
-}
-
-model ProjectStatusHistory {
-  id        String @id @default(cuid())
-  projectId String
-  oldStatus ProjectStatus?
-  newStatus ProjectStatus
-  changedBy String
-  
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user    User    @relation(fields: [changedBy], references: [id], onDelete: Cascade)
-  
-  changedAt DateTime @default(now())
-
-  @@map("project_status_history")
+  @@unique([identifier, token])
 }
 
 enum ProjectStatus {
@@ -62,4 +63,33 @@ enum ProjectStatus {
   COMPLETE
   APPROVED
   FINISHED
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  status      ProjectStatus @default(IN_PROGRESS)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  archivedAt  DateTime?
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  statusHistory ProjectStatusHistory[]
+
+  @@index([status])
+  @@index([userId])
+}
+
+model ProjectStatusHistory {
+  id        String        @id @default(cuid())
+  projectId String
+  oldStatus ProjectStatus?
+  newStatus ProjectStatus
+  changedAt DateTime      @default(now())
+  changedBy String
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [changedBy], references: [id])
+
+  @@index([projectId])
 }

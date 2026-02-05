@@ -1,97 +1,76 @@
-'use client'
-
-import { ProjectWithHistory, ProjectStatus } from '@/types'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ProjectStatusBadge } from '@/components/project-status-badge'
-import { ProjectStatusSelect } from '@/components/project-status-select'
-import { formatRelativeTime } from '@/lib/utils'
-import { Archive, User, Calendar } from 'lucide-react'
+import { ProjectActions } from '@/components/project-actions'
+import { formatDate } from '@/lib/utils'
+import { ProjectStatus } from '@prisma/client'
 
 interface ProjectCardProps {
-  project: ProjectWithHistory
-  onStatusUpdate: (projectId: string, status: ProjectStatus) => Promise<void>
-  onMoveToFinished?: (projectId: string) => Promise<void>
-}
-
-export function ProjectCard({ project, onStatusUpdate, onMoveToFinished }: ProjectCardProps) {
-  const isFinished = project.status === ProjectStatus.FINISHED
-  const canMoveToFinished = project.status === ProjectStatus.APPROVED && onMoveToFinished
-  
-  const handleMoveToFinished = async () => {
-    if (canMoveToFinished) {
-      await onMoveToFinished(project.id)
+  project: {
+    id: string
+    name: string
+    description?: string | null
+    status: ProjectStatus
+    createdAt: Date | string
+    updatedAt: Date | string
+    archivedAt?: Date | string | null
+    user: {
+      id: string
+      name: string | null
+      email: string
+    }
+    _count: {
+      statusHistory: number
     }
   }
+  onStatusChange?: (projectId: string, status: ProjectStatus) => void
+  isReadOnly?: boolean
+}
 
+export function ProjectCard({ project, onStatusChange, isReadOnly = false }: ProjectCardProps) {
   return (
-    <Card className={`transition-all hover:shadow-md ${isFinished ? 'opacity-75' : ''}`}>
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between">
-          <div className="flex-1 min-w-0">
-            <CardTitle className="text-lg font-medium truncate">
-              {project.name}
-            </CardTitle>
-            {project.description && (
-              <CardDescription className="mt-1 text-sm text-gray-600 line-clamp-2">
-                {project.description}
-              </CardDescription>
-            )}
-          </div>
-          <div className="flex items-center space-x-2 ml-4">
-            <ProjectStatusBadge status={project.status} />
-          </div>
-        </div>
-      </CardHeader>
-      
-      <CardContent className="space-y-3">
-        {/* Project metadata */}
-        <div className="flex items-center space-x-4 text-xs text-gray-500">
-          <div className="flex items-center space-x-1">
-            <User className="h-3 w-3" />
-            <span>{project.user.name || project.user.email}</span>
-          </div>
-          <div className="flex items-center space-x-1">
-            <Calendar className="h-3 w-3" />
-            <span>Updated {formatRelativeTime(project.updatedAt)}</span>
-          </div>
-        </div>
-
-        {/* Status controls */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            {!isFinished && (
-              <ProjectStatusSelect
-                currentStatus={project.status}
-                onStatusChange={(status) => onStatusUpdate(project.id, status)}
-              />
-            )}
-            
-            {canMoveToFinished && (
-              <button
-                onClick={handleMoveToFinished}
-                className="flex items-center space-x-1 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-                title="Move to Finished folder"
-              >
-                <Archive className="h-3 w-3" />
-                <span>Move to Finished</span>
-              </button>
-            )}
-          </div>
-          
-          {project.archivedAt && (
-            <div className="text-xs text-gray-500">
-              Archived {formatRelativeTime(project.archivedAt)}
-            </div>
+    <Card className="w-full">
+      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+        <div className="flex-1">
+          <CardTitle className="text-lg">{project.name}</CardTitle>
+          {project.description && (
+            <CardDescription className="mt-1">
+              {project.description}
+            </CardDescription>
           )}
         </div>
-
-        {/* Latest status change */}
-        {project.projectStatusHistory.length > 0 && (
-          <div className="text-xs text-gray-500 pt-2 border-t">
-            Last updated by {project.projectStatusHistory[0].user.name || project.projectStatusHistory[0].user.email} {' '}
-            {formatRelativeTime(project.projectStatusHistory[0].changedAt)}
-          </div>
+        {!isReadOnly && (
+          <ProjectActions 
+            project={project} 
+            onStatusChange={onStatusChange}
+          />
         )}
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-col space-y-3">
+          <div className="flex items-center justify-between">
+            <ProjectStatusBadge status={project.status} />
+            <span className="text-sm text-muted-foreground">
+              {project._count.statusHistory} status changes
+            </span>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4 text-sm text-muted-foreground">
+            <div>
+              <span className="font-medium">Created:</span>{' '}
+              {formatDate(project.createdAt)}
+            </div>
+            <div>
+              <span className="font-medium">Updated:</span>{' '}
+              {formatDate(project.updatedAt)}
+            </div>
+            {project.archivedAt && (
+              <div className="col-span-2">
+                <span className="font-medium">Archived:</span>{' '}
+                {formatDate(project.archivedAt)}
+              </div>
+            )}
+          </div>
+        </div>
       </CardContent>
     </Card>
   )

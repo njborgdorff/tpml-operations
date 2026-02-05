@@ -1,39 +1,57 @@
-'use client';
-
-import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
+import { ProjectStatus } from '@prisma/client'
 
 interface ProjectFilterProps {
-  activeFilter: 'active' | 'finished';
-  onFilterChange: (filter: 'active' | 'finished') => void;
-  activeCounts: {
-    active: number;
-    finished: number;
-  };
+  view: 'active' | 'finished' | 'all'
+  status: ProjectStatus | 'all'
+  onViewChange: (view: 'active' | 'finished' | 'all') => void
+  onStatusChange: (status: ProjectStatus | 'all') => void
 }
 
-export function ProjectFilter({ activeFilter, onFilterChange, activeCounts }: ProjectFilterProps) {
+export function ProjectFilter({ view, status, onViewChange, onStatusChange }: ProjectFilterProps) {
   return (
-    <div className="flex space-x-2">
-      <Button
-        variant={activeFilter === 'active' ? 'default' : 'outline'}
-        onClick={() => onFilterChange('active')}
-        className="flex items-center gap-2"
-      >
-        Active Projects
-        <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">
-          {activeCounts.active}
-        </span>
-      </Button>
-      <Button
-        variant={activeFilter === 'finished' ? 'default' : 'outline'}
-        onClick={() => onFilterChange('finished')}
-        className="flex items-center gap-2"
-      >
-        Finished Projects
-        <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">
-          {activeCounts.finished}
-        </span>
-      </Button>
+    <div className="flex items-center space-x-4">
+      <div className="flex items-center space-x-2">
+        <Button
+          variant={view === 'active' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => onViewChange('active')}
+        >
+          Active Projects
+        </Button>
+        <Button
+          variant={view === 'finished' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => onViewChange('finished')}
+        >
+          Finished Projects
+        </Button>
+        <Button
+          variant={view === 'all' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => onViewChange('all')}
+        >
+          All Projects
+        </Button>
+      </div>
+
+      {view !== 'finished' && (
+        <Select
+          value={status}
+          onValueChange={(value) => onStatusChange(value as ProjectStatus | 'all')}
+        >
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Filter by status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Statuses</SelectItem>
+            <SelectItem value={ProjectStatus.IN_PROGRESS}>In Progress</SelectItem>
+            <SelectItem value={ProjectStatus.COMPLETE}>Complete</SelectItem>
+            <SelectItem value={ProjectStatus.APPROVED}>Approved</SelectItem>
+          </SelectContent>
+        </Select>
+      )}
     </div>
-  );
+  )
 }
