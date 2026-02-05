@@ -1,26 +1,27 @@
-import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
-import './globals.css'
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+import './globals.css';
+import { Providers } from './providers';
 
-const inter = Inter({ subsets: ['latin'] })
+const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'Finished Project Management',
-  description: 'A simple project archiving system for managing completed projects',
-}
+  description: 'Simple project archiving system for managing completed projects',
+};
 
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
   return (
     <html lang="en">
       <body className={inter.className}>
-        <main className="min-h-screen bg-background">
+        <Providers>
           {children}
-        </main>
+        </Providers>
       </body>
     </html>
-  )
+  );
 }

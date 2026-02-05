@@ -1,95 +1,69 @@
-'use client'
-
-import { useState } from 'react'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { ProjectStatusBadge } from '@/components/project-status-badge'
-import { Project, ProjectStatus } from '@/types/project'
-import { format } from 'date-fns'
+import { Project } from '@/lib/types';
+import { formatDate } from '@/lib/utils';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { ProjectStatusBadge } from '@/components/project-status-badge';
+import { ProjectStatusSelect } from '@/components/project-status-select';
 
 interface ProjectCardProps {
-  project: Project
-  onStatusChange: (projectId: string, newStatus: ProjectStatus) => Promise<void>
+  project: Project;
+  showStatusSelect?: boolean;
 }
 
-export function ProjectCard({ project, onStatusChange }: ProjectCardProps) {
-  const [isUpdating, setIsUpdating] = useState(false)
-
-  const handleStatusChange = async (newStatus: ProjectStatus) => {
-    setIsUpdating(true)
-    try {
-      await onStatusChange(project.id, newStatus)
-    } finally {
-      setIsUpdating(false)
-    }
-  }
-
-  const getAvailableStatusTransitions = (currentStatus: ProjectStatus) => {
-    switch (currentStatus) {
-      case ProjectStatus.IN_PROGRESS:
-        return [
-          { status: ProjectStatus.COMPLETE, label: 'Mark Complete', variant: 'outline' as const }
-        ]
-      case ProjectStatus.COMPLETE:
-        return [
-          { status: ProjectStatus.IN_PROGRESS, label: 'Back to Progress', variant: 'outline' as const },
-          { status: ProjectStatus.APPROVED, label: 'Mark Approved', variant: 'default' as const }
-        ]
-      case ProjectStatus.APPROVED:
-        return [
-          { status: ProjectStatus.COMPLETE, label: 'Back to Complete', variant: 'outline' as const },
-          { status: ProjectStatus.FINISHED, label: 'Move to Finished', variant: 'secondary' as const }
-        ]
-      case ProjectStatus.FINISHED:
-        return [] // No transitions from finished state
-      default:
-        return []
-    }
-  }
-
-  const availableTransitions = getAvailableStatusTransitions(project.status)
-
+export function ProjectCard({ project, showStatusSelect = true }: ProjectCardProps) {
+  const isFinished = project.status === 'FINISHED';
+  
   return (
-    <Card className="w-full">
+    <Card className={`transition-all hover:shadow-md ${isFinished ? 'opacity-75' : ''}`}>
       <CardHeader>
         <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <CardTitle className="text-xl">{project.name}</CardTitle>
+          <div className="flex-1 min-w-0">
+            <CardTitle className="text-lg truncate">{project.name}</CardTitle>
             {project.description && (
-              <CardDescription className="mt-2">
+              <CardDescription className="mt-1 line-clamp-2">
                 {project.description}
               </CardDescription>
             )}
           </div>
-          <ProjectStatusBadge status={project.status} />
+          <div className="ml-4 flex-shrink-0">
+            <ProjectStatusBadge status={project.status} />
+          </div>
         </div>
       </CardHeader>
       
       <CardContent>
-        <div className="text-sm text-gray-600">
-          <p>Created: {format(new Date(project.createdAt), 'MMM dd, yyyy')}</p>
-          <p>Updated: {format(new Date(project.updatedAt), 'MMM dd, yyyy')}</p>
+        <div className="space-y-2 text-sm text-muted-foreground">
+          <div>
+            <span className="font-medium">Created:</span> {formatDate(project.createdAt)}
+          </div>
+          <div>
+            <span className="font-medium">Updated:</span> {formatDate(project.updatedAt)}
+          </div>
           {project.archivedAt && (
-            <p>Archived: {format(new Date(project.archivedAt), 'MMM dd, yyyy')}</p>
+            <div>
+              <span className="font-medium">Archived:</span> {formatDate(project.archivedAt)}
+            </div>
           )}
         </div>
       </CardContent>
-
-      {availableTransitions.length > 0 && (
-        <CardFooter className="flex gap-2 flex-wrap">
-          {availableTransitions.map(({ status, label, variant }) => (
-            <Button
-              key={status}
-              variant={variant}
-              size="sm"
-              disabled={isUpdating}
-              onClick={() => handleStatusChange(status)}
-            >
-              {isUpdating ? 'Updating...' : label}
-            </Button>
-          ))}
+      
+      {showStatusSelect && !isFinished && (
+        <CardFooter>
+          <div className="flex items-center justify-between w-full">
+            <span className="text-sm text-muted-foreground">Status:</span>
+            <ProjectStatusSelect 
+              projectId={project.id} 
+              currentStatus={project.status}
+            />
+          </div>
         </CardFooter>
       )}
     </Card>
-  )
+  );
 }

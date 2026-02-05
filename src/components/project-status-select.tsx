@@ -1,50 +1,66 @@
-'use client'
-
-import { ProjectStatus } from '@/lib/types'
-import { getStatusLabel } from '@/lib/utils'
+import { ProjectStatus } from '@/lib/types';
+import { useUpdateProjectStatus } from '@/hooks/useProjects';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from './ui/select'
+} from '@/components/ui/select';
+import { toast } from 'sonner';
 
 interface ProjectStatusSelectProps {
-  currentStatus: ProjectStatus
-  onStatusChange: (status: ProjectStatus) => void
-  disabled?: boolean
+  projectId: string;
+  currentStatus: ProjectStatus;
+  disabled?: boolean;
 }
 
+const statusOptions = [
+  { value: 'IN_PROGRESS', label: 'In Progress' },
+  { value: 'COMPLETE', label: 'Complete' },
+  { value: 'APPROVED', label: 'Approved' },
+  { value: 'FINISHED', label: 'Finished' },
+];
+
 export function ProjectStatusSelect({ 
+  projectId, 
   currentStatus, 
-  onStatusChange, 
   disabled = false 
 }: ProjectStatusSelectProps) {
-  const statusOptions = [
-    ProjectStatus.IN_PROGRESS,
-    ProjectStatus.COMPLETE,
-    ProjectStatus.APPROVED,
-  ]
+  const updateStatusMutation = useUpdateProjectStatus();
+
+  const handleStatusChange = async (newStatus: string) => {
+    if (newStatus === currentStatus) return;
+
+    try {
+      await updateStatusMutation.mutateAsync({
+        id: projectId,
+        status: newStatus as ProjectStatus,
+      });
+      
+      toast.success('Project status updated successfully');
+    } catch (error) {
+      toast.error('Failed to update project status');
+      console.error('Error updating project status:', error);
+    }
+  };
 
   return (
     <Select
       value={currentStatus}
-      onValueChange={(value) => onStatusChange(value as ProjectStatus)}
-      disabled={disabled}
+      onValueChange={handleStatusChange}
+      disabled={disabled || updateStatusMutation.isPending}
     >
-      <SelectTrigger className="w-32">
-        <SelectValue>
-          {getStatusLabel(currentStatus)}
-        </SelectValue>
+      <SelectTrigger className="w-[140px]">
+        <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        {statusOptions.map((status) => (
-          <SelectItem key={status} value={status}>
-            {getStatusLabel(status)}
+        {statusOptions.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
           </SelectItem>
         ))}
       </SelectContent>
     </Select>
-  )
+  );
 }

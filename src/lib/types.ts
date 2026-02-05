@@ -1,9 +1,4 @@
-export enum ProjectStatus {
-  IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETE = 'COMPLETE',
-  APPROVED = 'APPROVED',
-  FINISHED = 'FINISHED'
-}
+export type ProjectStatus = 'IN_PROGRESS' | 'COMPLETE' | 'APPROVED' | 'FINISHED';
 
 export interface Project {
   id: string;
@@ -16,10 +11,9 @@ export interface Project {
   userId: string;
   user: {
     id: string;
-    name?: string;
     email: string;
+    name?: string;
   };
-  history?: ProjectStatusHistory[];
 }
 
 export interface ProjectStatusHistory {
@@ -36,11 +30,11 @@ export interface ProjectStatusHistory {
   };
 }
 
-export interface User {
-  id: string;
-  email: string;
-  name?: string;
-  role: string;
+export interface CreateProjectData {
+  name: string;
+  description?: string;
 }
 
-export type ProjectFilter = 'all' | 'active' | 'finished';
+export interface UpdateProjectStatusData {
+  status: ProjectStatus;
+}

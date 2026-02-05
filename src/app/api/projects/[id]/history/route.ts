@@ -1,55 +1,41 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
-
-interface RouteParams {
-  params: {
-    id: string
-  }
-}
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { prisma } from '@/lib/prisma';
 
 export async function GET(
   request: NextRequest,
-  { params }: RouteParams
+  { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession();
     
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { id } = params
+    // Find user
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email },
+    });
 
-    // Verify project exists and user has access
-    const project = await prisma.project.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        userId: true,
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    // Verify project belongs to user
+    const project = await prisma.project.findFirst({
+      where: {
+        id: params.id,
+        userId: user.id,
       },
-    })
+    });
 
     if (!project) {
-      return NextResponse.json(
-        { error: 'Project not found' },
-        { status: 404 }
-      )
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    if (project.userId !== session.user.id) {
-      return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      )
-    }
-
-    // Get project status history
     const history = await prisma.projectStatusHistory.findMany({
-      where: {
-        projectId: id,
-      },
+      where: { projectId: params.id },
       include: {
         user: {
           select: {
@@ -59,17 +45,15 @@ export async function GET(
           },
         },
       },
-      orderBy: {
-        changedAt: 'desc',
-      },
-    })
+      orderBy: { changedAt: 'desc' },
+    });
 
-    return NextResponse.json(history)
+    return NextResponse.json(history);
   } catch (error) {
-    console.error('Error fetching project history:', error)
+    console.error('Error fetching project history:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Failed to fetch project history' },
       { status: 500 }
-    )
+    );
   }
 }

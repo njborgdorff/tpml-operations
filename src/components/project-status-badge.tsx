@@ -1,46 +1,35 @@
-import { Badge } from '@/components/ui/badge'
-import { ProjectStatus } from '@/types/project'
+import { Badge } from '@/components/ui/badge';
+import { ProjectStatus } from '@/lib/types';
 
 interface ProjectStatusBadgeProps {
-  status: ProjectStatus
+  status: ProjectStatus;
 }
 
+const statusConfig = {
+  IN_PROGRESS: {
+    label: 'In Progress',
+    variant: 'info' as const,
+  },
+  COMPLETE: {
+    label: 'Complete',
+    variant: 'warning' as const,
+  },
+  APPROVED: {
+    label: 'Approved',
+    variant: 'success' as const,
+  },
+  FINISHED: {
+    label: 'Finished',
+    variant: 'secondary' as const,
+  },
+};
+
 export function ProjectStatusBadge({ status }: ProjectStatusBadgeProps) {
-  const getStatusConfig = (status: ProjectStatus) => {
-    switch (status) {
-      case ProjectStatus.IN_PROGRESS:
-        return {
-          variant: 'info' as const,
-          text: 'In Progress'
-        }
-      case ProjectStatus.COMPLETE:
-        return {
-          variant: 'warning' as const,
-          text: 'Complete'
-        }
-      case ProjectStatus.APPROVED:
-        return {
-          variant: 'success' as const,
-          text: 'Approved'
-        }
-      case ProjectStatus.FINISHED:
-        return {
-          variant: 'secondary' as const,
-          text: 'Finished'
-        }
-      default:
-        return {
-          variant: 'default' as const,
-          text: 'Unknown'
-        }
-    }
-  }
-
-  const config = getStatusConfig(status)
-
+  const config = statusConfig[status];
+  
   return (
     <Badge variant={config.variant}>
-      {config.text}
+      {config.label}
     </Badge>
-  )
+  );
 }
