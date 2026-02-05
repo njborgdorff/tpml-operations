@@ -1,79 +1,63 @@
 'use client'
 
 import { useState } from 'react'
-import { ProjectStatus } from '@/lib/types'
-import { Button } from '@/components/ui/button'
-import { getStatusLabel } from '@/lib/utils'
+import { ProjectStatus, PROJECT_STATUS_LABELS } from '@/types/project'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useToast } from '@/hooks/use-toast'
 
 interface ProjectStatusSelectProps {
-  currentStatus: ProjectStatus
   projectId: string
-  onStatusChange?: (newStatus: ProjectStatus) => void
-  disabled?: boolean
+  currentStatus: ProjectStatus
+  onStatusUpdate: (projectId: string, newStatus: string) => Promise<void>
 }
 
-export function ProjectStatusSelect({
-  currentStatus,
-  projectId,
-  onStatusChange,
-  disabled = false
+export function ProjectStatusSelect({ 
+  projectId, 
+  currentStatus, 
+  onStatusUpdate 
 }: ProjectStatusSelectProps) {
   const [isUpdating, setIsUpdating] = useState(false)
+  const { toast } = useToast()
 
-  const getNextStatus = (current: ProjectStatus): ProjectStatus | null => {
-    switch (current) {
-      case ProjectStatus.IN_PROGRESS:
-        return ProjectStatus.COMPLETE
-      case ProjectStatus.COMPLETE:
-        return ProjectStatus.APPROVED
-      case ProjectStatus.APPROVED:
-        return ProjectStatus.FINISHED
-      default:
-        return null
-    }
-  }
-
-  const handleStatusUpdate = async (newStatus: ProjectStatus) => {
-    if (disabled || isUpdating) return
+  const handleStatusChange = async (newStatus: string) => {
+    if (newStatus === currentStatus) return
 
     setIsUpdating(true)
     try {
-      const response = await fetch(`/api/projects/${projectId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status: newStatus }),
+      await onStatusUpdate(projectId, newStatus)
+      toast({
+        title: "Status Updated",
+        description: `Project status changed to ${PROJECT_STATUS_LABELS[newStatus as ProjectStatus]}`,
       })
-
-      if (!response.ok) {
-        throw new Error('Failed to update status')
-      }
-
-      const updatedProject = await response.json()
-      onStatusChange?.(updatedProject.status)
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to update project status'
       console.error('Failed to update project status:', error)
-      // You might want to show a toast notification here
+      toast({
+        variant: "destructive",
+        title: "Update Failed",
+        description: errorMessage,
+      })
     } finally {
       setIsUpdating(false)
     }
   }
 
-  const nextStatus = getNextStatus(currentStatus)
-
-  if (!nextStatus || currentStatus === ProjectStatus.FINISHED) {
-    return null
-  }
-
   return (
-    <Button
-      size="sm"
-      variant="outline"
-      onClick={() => handleStatusUpdate(nextStatus)}
-      disabled={disabled || isUpdating}
+    <Select
+      value={currentStatus}
+      onValueChange={handleStatusChange}
+      disabled={isUpdating}
     >
-      {isUpdating ? 'Updating...' : `Mark as ${getStatusLabel(nextStatus)}`}
-    </Button>
+      <SelectTrigger className="w-[140px] h-8">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {Object.entries(PROJECT_STATUS_LABELS).map(([status, label]) => (
+          <SelectItem key={status} value={status}>
+            {label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }

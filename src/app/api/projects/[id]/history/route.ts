@@ -1,6 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth/next'
-import { prisma } from '@/lib/db'
+import { NextRequest, NextResponse } from "next/server"
+import { getServerSession } from "next-auth"
+import { PrismaClient } from "@prisma/client"
+
+const prisma = new PrismaClient()
 
 export async function GET(
   request: NextRequest,
@@ -12,7 +14,6 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Get user
     const user = await prisma.user.findUnique({
       where: { email: session.user.email }
     })
@@ -30,8 +31,7 @@ export async function GET(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    // Check if user owns the project or has admin role
-    if (project.userId !== user.id && user.role !== 'ADMIN') {
+    if (project.userId !== user.id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -46,14 +46,16 @@ export async function GET(
           }
         }
       },
-      orderBy: { changedAt: 'desc' }
+      orderBy: {
+        changedAt: 'desc'
+      }
     })
 
     return NextResponse.json(history)
   } catch (error) {
-    console.error('Failed to fetch project history:', error)
+    console.error('Error fetching project history:', error)
     return NextResponse.json(
-      { error: 'Failed to fetch project history' },
+      { error: 'Internal server error' }, 
       { status: 500 }
     )
   }

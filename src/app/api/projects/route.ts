@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth/next'
-import { prisma } from '@/lib/db'
-import { ProjectStatus, ProjectFilter, CreateProjectRequest } from '@/lib/types'
+import { NextRequest, NextResponse } from "next/server"
+import { getServerSession } from "next-auth"
+import { PrismaClient, ProjectStatus } from "@prisma/client"
+
+const prisma = new PrismaClient()
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,9 +12,8 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url)
-    const filter = searchParams.get('filter') as ProjectFilter || 'ALL'
+    const filter = searchParams.get('filter') || 'ALL'
 
-    // Get user
     const user = await prisma.user.findUnique({
       where: { email: session.user.email }
     })
@@ -22,22 +22,30 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
-    // Build where clause based on filter
-    let whereClause: any = { userId: user.id }
+    let whereClause: any = {
+      userId: user.id
+    }
 
+    // Apply filtering based on the filter parameter
     switch (filter) {
       case 'ACTIVE':
         whereClause.status = {
-          in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE, ProjectStatus.APPROVED]
+          in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE]
         }
         break
       case 'FINISHED':
-        whereClause.status = ProjectStatus.FINISHED
+        whereClause.status = ProjectStatus.ARCHIVED
         break
-      case 'ALL':
-      default:
-        // No additional filter
+      case 'IN_PROGRESS':
+        whereClause.status = ProjectStatus.IN_PROGRESS
         break
+      case 'COMPLETE':
+        whereClause.status = ProjectStatus.COMPLETE
+        break
+      case 'APPROVED':
+        whereClause.status = ProjectStatus.APPROVED
+        break
+      // 'ALL' case - no additional filtering
     }
 
     const projects = await prisma.project.findMany({
@@ -60,18 +68,21 @@ export async function GET(request: NextRequest) {
               }
             }
           },
-          orderBy: { changedAt: 'desc' },
-          take: 5 // Limit to last 5 status changes
+          orderBy: {
+            changedAt: 'desc'
+          }
         }
       },
-      orderBy: { updatedAt: 'desc' }
+      orderBy: {
+        updatedAt: 'desc'
+      }
     })
 
     return NextResponse.json(projects)
   } catch (error) {
-    console.error('Failed to fetch projects:', error)
+    console.error('Error fetching projects:', error)
     return NextResponse.json(
-      { error: 'Failed to fetch projects' },
+      { error: 'Internal server error' }, 
       { status: 500 }
     )
   }
@@ -84,17 +95,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const body = await request.json() as CreateProjectRequest
-    const { name, description } = body
-
-    if (!name || name.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'Project name is required' },
-        { status: 400 }
-      )
-    }
-
-    // Get user
     const user = await prisma.user.findUnique({
       where: { email: session.user.email }
     })
@@ -103,16 +103,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
-    // Create project with initial status history
+    const body = await request.json()
+    const { name, description } = body
+
+    if (!name) {
+      return NextResponse.json(
+        { error: 'Project name is required' }, 
+        { status: 400 }
+      )
+    }
+
     const project = await prisma.project.create({
       data: {
-        name: name.trim(),
-        description: description?.trim(),
-        status: ProjectStatus.IN_PROGRESS,
+        name,
+        description: description || '',
         userId: user.id,
         statusHistory: {
           create: {
             newStatus: ProjectStatus.IN_PROGRESS,
+            oldStatus: null,
             changedBy: user.id
           }
         }
@@ -134,6 +143,9 @@ export async function POST(request: NextRequest) {
                 email: true
               }
             }
+          },
+          orderBy: {
+            changedAt: 'desc'
           }
         }
       }
@@ -141,9 +153,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(project, { status: 201 })
   } catch (error) {
-    console.error('Failed to create project:', error)
+    console.error('Error creating project:', error)
     return NextResponse.json(
-      { error: 'Failed to create project' },
+      { error: 'Internal server error' }, 
       { status: 500 }
     )
   }

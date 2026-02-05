@@ -15,33 +15,3 @@ export function formatDate(date: Date | string): string {
     minute: '2-digit'
   })
 }
-
-export function getStatusColor(status: string): string {
-  switch (status) {
-    case 'IN_PROGRESS':
-      return 'info'
-    case 'COMPLETE':
-      return 'warning'
-    case 'APPROVED':
-      return 'success'
-    case 'FINISHED':
-      return 'secondary'
-    default:
-      return 'default'
-  }
-}
-
-export function getStatusLabel(status: string): string {
-  switch (status) {
-    case 'IN_PROGRESS':
-      return 'In Progress'
-    case 'COMPLETE':
-      return 'Complete'
-    case 'APPROVED':
-      return 'Approved'
-    case 'FINISHED':
-      return 'Finished'
-    default:
-      return status
-  }
-}

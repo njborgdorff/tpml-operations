@@ -1,32 +1,28 @@
-export const sessionStorage = {
-  getItem: (key: string): string | null => {
-    if (typeof window === 'undefined') return null
-    try {
-      return window.sessionStorage.getItem(key)
-    } catch {
-      return null
-    }
-  },
+import { ProjectFilter } from "@/types/project"
 
-  setItem: (key: string, value: string): void => {
-    if (typeof window === 'undefined') return
-    try {
-      window.sessionStorage.setItem(key, value)
-    } catch {
-      // Silent fail for storage errors
-    }
-  },
+const FILTER_STORAGE_KEY = 'project-filter'
 
-  removeItem: (key: string): void => {
-    if (typeof window === 'undefined') return
-    try {
-      window.sessionStorage.removeItem(key)
-    } catch {
-      // Silent fail for storage errors
+export const getStoredFilter = (): ProjectFilter => {
+  if (typeof window === 'undefined') return 'ALL'
+  
+  try {
+    const stored = sessionStorage.getItem(FILTER_STORAGE_KEY)
+    if (stored && ['ALL', 'ACTIVE', 'FINISHED', 'IN_PROGRESS', 'COMPLETE', 'APPROVED'].includes(stored)) {
+      return stored as ProjectFilter
     }
+  } catch (error) {
+    console.warn('Failed to read filter from session storage:', error)
   }
+  
+  return 'ALL'
 }
 
-export const STORAGE_KEYS = {
-  PROJECT_FILTER: 'project_filter'
-} as const
+export const setStoredFilter = (filter: ProjectFilter): void => {
+  if (typeof window === 'undefined') return
+  
+  try {
+    sessionStorage.setItem(FILTER_STORAGE_KEY, filter)
+  } catch (error) {
+    console.warn('Failed to store filter in session storage:', error)
+  }
+}
