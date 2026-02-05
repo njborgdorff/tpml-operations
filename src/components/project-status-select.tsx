@@ -1,41 +1,40 @@
-"use client"
+'use client'
 
-import { useState } from "react"
-import { ProjectStatus } from "@prisma/client"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { toast } from "sonner"
+import { useState } from 'react'
+import { ProjectStatus } from '@/lib/types'
+import { Button } from '@/components/ui/button'
+import { getStatusLabel } from '@/lib/utils'
 
 interface ProjectStatusSelectProps {
-  projectId: string
   currentStatus: ProjectStatus
+  projectId: string
   onStatusChange?: (newStatus: ProjectStatus) => void
   disabled?: boolean
 }
 
-const statusLabels: Record<ProjectStatus, string> = {
-  IN_PROGRESS: "In Progress",
-  COMPLETE: "Complete", 
-  APPROVED: "Approved",
-  FINISHED: "Finished"
-}
-
-const statusColors: Record<ProjectStatus, string> = {
-  IN_PROGRESS: "text-blue-600",
-  COMPLETE: "text-yellow-600",
-  APPROVED: "text-green-600", 
-  FINISHED: "text-gray-600"
-}
-
-export function ProjectStatusSelect({ 
-  projectId, 
-  currentStatus, 
+export function ProjectStatusSelect({
+  currentStatus,
+  projectId,
   onStatusChange,
   disabled = false
 }: ProjectStatusSelectProps) {
   const [isUpdating, setIsUpdating] = useState(false)
 
-  const handleStatusChange = async (newStatus: ProjectStatus) => {
-    if (newStatus === currentStatus) return
+  const getNextStatus = (current: ProjectStatus): ProjectStatus | null => {
+    switch (current) {
+      case ProjectStatus.IN_PROGRESS:
+        return ProjectStatus.COMPLETE
+      case ProjectStatus.COMPLETE:
+        return ProjectStatus.APPROVED
+      case ProjectStatus.APPROVED:
+        return ProjectStatus.FINISHED
+      default:
+        return null
+    }
+  }
+
+  const handleStatusUpdate = async (newStatus: ProjectStatus) => {
+    if (disabled || isUpdating) return
 
     setIsUpdating(true)
     try {
@@ -48,43 +47,33 @@ export function ProjectStatusSelect({
       })
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Failed to update status')
+        throw new Error('Failed to update status')
       }
 
-      toast.success(`Project status updated to ${statusLabels[newStatus]}`)
-      onStatusChange?.(newStatus)
+      const updatedProject = await response.json()
+      onStatusChange?.(updatedProject.status)
     } catch (error) {
-      console.error('Error updating project status:', error)
-      toast.error(error instanceof Error ? error.message : 'Failed to update project status')
+      console.error('Failed to update project status:', error)
+      // You might want to show a toast notification here
     } finally {
       setIsUpdating(false)
     }
   }
 
-  // Don't allow changes if project is finished
-  const isDisabled = disabled || isUpdating || currentStatus === ProjectStatus.FINISHED
+  const nextStatus = getNextStatus(currentStatus)
+
+  if (!nextStatus || currentStatus === ProjectStatus.FINISHED) {
+    return null
+  }
 
   return (
-    <Select
-      value={currentStatus}
-      onValueChange={handleStatusChange}
-      disabled={isDisabled}
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={() => handleStatusUpdate(nextStatus)}
+      disabled={disabled || isUpdating}
     >
-      <SelectTrigger className={`w-40 ${statusColors[currentStatus]}`}>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {Object.entries(statusLabels).map(([status, label]) => (
-          <SelectItem 
-            key={status} 
-            value={status}
-            className={statusColors[status as ProjectStatus]}
-          >
-            {label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+      {isUpdating ? 'Updating...' : `Mark as ${getStatusLabel(nextStatus)}`}
+    </Button>
   )
 }

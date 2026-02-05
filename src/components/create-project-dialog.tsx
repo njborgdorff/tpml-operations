@@ -1,136 +1,100 @@
-"use client"
+'use client'
 
 import { useState } from 'react'
-import { Button } from './ui/button'
-import { Input } from './ui/input'
-import { Label } from './ui/label'
-import { Textarea } from './ui/textarea'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from './ui/dialog'
-import { Loader2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 interface CreateProjectDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onSubmit: (data: { name: string; description?: string }) => Promise<void>
+  onProjectCreate: (name: string, description?: string) => Promise<void>
 }
 
-export function CreateProjectDialog({
-  open,
-  onOpenChange,
-  onSubmit
-}: CreateProjectDialogProps) {
+export function CreateProjectDialog({ onProjectCreate }: CreateProjectDialogProps) {
+  const [isOpen, setIsOpen] = useState(false)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [isCreating, setIsCreating] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
-    if (!name.trim()) {
-      setError('Project name is required')
-      return
-    }
+    if (!name.trim() || isCreating) return
 
-    setIsSubmitting(true)
-    setError(null)
-
+    setIsCreating(true)
     try {
-      await onSubmit({
-        name: name.trim(),
-        description: description.trim() || undefined
-      })
-      
-      // Reset form
+      await onProjectCreate(name.trim(), description.trim() || undefined)
       setName('')
       setDescription('')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create project')
+      setIsOpen(false)
+    } catch (error) {
+      console.error('Failed to create project:', error)
     } finally {
-      setIsSubmitting(false)
+      setIsCreating(false)
     }
   }
 
-  const handleOpenChange = (newOpen: boolean) => {
-    if (!isSubmitting) {
-      onOpenChange(newOpen)
-      if (!newOpen) {
-        // Reset form when closing
-        setName('')
-        setDescription('')
-        setError(null)
-      }
-    }
+  if (!isOpen) {
+    return (
+      <Button onClick={() => setIsOpen(true)}>
+        Create New Project
+      </Button>
+    )
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
-        <form onSubmit={handleSubmit}>
-          <DialogHeader>
-            <DialogTitle>Create New Project</DialogTitle>
-            <DialogDescription>
-              Add a new project to start tracking its progress.
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="name">Project Name</Label>
-              <Input
-                id="name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Enter project name..."
-                disabled={isSubmitting}
-                required
-              />
-            </div>
-            
-            <div className="grid gap-2">
-              <Label htmlFor="description">Description (Optional)</Label>
-              <Textarea
-                id="description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Enter project description..."
-                rows={3}
-                disabled={isSubmitting}
-              />
-            </div>
-            
-            {error && (
-              <div className="text-sm text-red-600 bg-red-50 p-2 rounded-md">
-                {error}
-              </div>
-            )}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+        <h2 className="text-lg font-semibold mb-4">Create New Project</h2>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label htmlFor="name" className="block text-sm font-medium mb-1">
+              Project Name *
+            </label>
+            <input
+              id="name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Enter project name"
+              required
+            />
           </div>
           
-          <DialogFooter>
+          <div>
+            <label htmlFor="description" className="block text-sm font-medium mb-1">
+              Description
+            </label>
+            <textarea
+              id="description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Optional project description"
+              rows={3}
+            />
+          </div>
+          
+          <div className="flex justify-end space-x-3">
             <Button
               type="button"
               variant="outline"
-              onClick={() => handleOpenChange(false)}
-              disabled={isSubmitting}
+              onClick={() => {
+                setIsOpen(false)
+                setName('')
+                setDescription('')
+              }}
+              disabled={isCreating}
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              Create Project
+            <Button
+              type="submit"
+              disabled={!name.trim() || isCreating}
+            >
+              {isCreating ? 'Creating...' : 'Create Project'}
             </Button>
-          </DialogFooter>
+          </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   )
 }

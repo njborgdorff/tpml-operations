@@ -1,91 +1,80 @@
-"use client"
+'use client'
 
-import { ProjectStatus } from "@prisma/client"
-import { ProjectStatusBadge } from "@/components/project-status-badge"
-import { ProjectStatusSelect } from "@/components/project-status-select"
-import { formatDistanceToNow } from "date-fns"
-
-interface Project {
-  id: string
-  name: string
-  description: string | null
-  status: ProjectStatus
-  createdAt: string
-  updatedAt: string
-  archivedAt: string | null
-  user: {
-    id: string
-    name: string | null
-    email: string
-  }
-  statusHistory: Array<{
-    changedAt: string
-    newStatus: ProjectStatus
-    user: {
-      name: string | null
-      email: string
-    }
-  }>
-}
+import { useState } from 'react'
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { ProjectStatusBadge } from '@/components/project-status-badge'
+import { ProjectStatusSelect } from '@/components/project-status-select'
+import { Project, ProjectStatus } from '@/lib/types'
+import { formatDate } from '@/lib/utils'
 
 interface ProjectCardProps {
   project: Project
-  onStatusChange?: (projectId: string, newStatus: ProjectStatus) => void
-  showStatusSelect?: boolean
+  onProjectUpdate?: (updatedProject: Project) => void
+  readOnly?: boolean
 }
 
-export function ProjectCard({ 
-  project, 
-  onStatusChange, 
-  showStatusSelect = true 
-}: ProjectCardProps) {
-  const isFinished = project.status === ProjectStatus.FINISHED
-  const lastStatusChange = project.statusHistory[0]
+export function ProjectCard({ project, onProjectUpdate, readOnly = false }: ProjectCardProps) {
+  const [currentProject, setCurrentProject] = useState(project)
+
+  const handleStatusChange = (newStatus: ProjectStatus) => {
+    const updatedProject = {
+      ...currentProject,
+      status: newStatus,
+      updatedAt: new Date(),
+      archivedAt: newStatus === ProjectStatus.FINISHED ? new Date() : currentProject.archivedAt
+    }
+    setCurrentProject(updatedProject)
+    onProjectUpdate?.(updatedProject)
+  }
+
+  const isFinished = currentProject.status === ProjectStatus.FINISHED
 
   return (
-    <div className="border rounded-lg p-6 bg-white shadow-sm hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex-1">
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">
-            {project.name}
-          </h3>
-          {project.description && (
-            <p className="text-gray-600 text-sm mb-3">
-              {project.description}
-            </p>
-          )}
-        </div>
-        <div className="ml-4">
-          {showStatusSelect && !isFinished ? (
-            <ProjectStatusSelect
-              projectId={project.id}
-              currentStatus={project.status}
-              onStatusChange={(newStatus) => onStatusChange?.(project.id, newStatus)}
-            />
-          ) : (
-            <ProjectStatusBadge status={project.status} />
-          )}
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between text-sm text-gray-500">
-        <div>
-          Created {formatDistanceToNow(new Date(project.createdAt), { addSuffix: true })}
-        </div>
-        {lastStatusChange && (
-          <div>
-            Status changed {formatDistanceToNow(new Date(lastStatusChange.changedAt), { addSuffix: true })}
-            {lastStatusChange.user.name && (
-              <span className="ml-1">by {lastStatusChange.user.name}</span>
+    <Card className={`transition-all duration-200 hover:shadow-md ${isFinished ? 'opacity-75' : ''}`}>
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <CardTitle className="text-lg">{currentProject.name}</CardTitle>
+            {currentProject.description && (
+              <CardDescription className="mt-2">
+                {currentProject.description}
+              </CardDescription>
             )}
           </div>
-        )}
-        {isFinished && project.archivedAt && (
+          <ProjectStatusBadge status={currentProject.status} className="ml-3" />
+        </div>
+      </CardHeader>
+      
+      <CardContent className="pt-0">
+        <div className="space-y-2 text-sm text-muted-foreground">
           <div>
-            Archived {formatDistanceToNow(new Date(project.archivedAt), { addSuffix: true })}
+            <span className="font-medium">Created:</span> {formatDate(currentProject.createdAt)}
           </div>
-        )}
-      </div>
-    </div>
+          <div>
+            <span className="font-medium">Updated:</span> {formatDate(currentProject.updatedAt)}
+          </div>
+          {currentProject.archivedAt && (
+            <div>
+              <span className="font-medium">Archived:</span> {formatDate(currentProject.archivedAt)}
+            </div>
+          )}
+          {currentProject.user && (
+            <div>
+              <span className="font-medium">Owner:</span> {currentProject.user.name || currentProject.user.email}
+            </div>
+          )}
+        </div>
+      </CardContent>
+
+      {!readOnly && !isFinished && (
+        <CardFooter className="pt-0">
+          <ProjectStatusSelect
+            currentStatus={currentProject.status}
+            projectId={currentProject.id}
+            onStatusChange={handleStatusChange}
+          />
+        </CardFooter>
+      )}
+    </Card>
   )
 }

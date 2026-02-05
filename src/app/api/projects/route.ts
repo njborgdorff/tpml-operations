@@ -1,64 +1,77 @@
-import { NextRequest, NextResponse } from "next/server"
-import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/lib/auth"
-import { prisma } from "@/lib/prisma"
-import { ProjectStatus } from "@prisma/client"
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth/next'
+import { prisma } from '@/lib/db'
+import { ProjectStatus, ProjectFilter, CreateProjectRequest } from '@/lib/types'
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
-    
+    const session = await getServerSession()
     if (!session?.user?.email) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const { searchParams } = new URL(request.url)
+    const filter = searchParams.get('filter') as ProjectFilter || 'ALL'
+
+    // Get user
     const user = await prisma.user.findUnique({
       where: { email: session.user.email }
     })
 
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 })
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
-    const { searchParams } = new URL(request.url)
-    const statusFilter = searchParams.get("status")
-    const viewFilter = searchParams.get("view") // "active" or "finished"
+    // Build where clause based on filter
+    let whereClause: any = { userId: user.id }
 
-    let whereCondition: any = {
-      userId: user.id
-    }
-
-    if (viewFilter === "active") {
-      whereCondition.status = {
-        in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE]
-      }
-    } else if (viewFilter === "finished") {
-      whereCondition.status = ProjectStatus.ARCHIVED
-    } else if (statusFilter) {
-      whereCondition.status = statusFilter as ProjectStatus
+    switch (filter) {
+      case 'ACTIVE':
+        whereClause.status = {
+          in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE, ProjectStatus.APPROVED]
+        }
+        break
+      case 'FINISHED':
+        whereClause.status = ProjectStatus.FINISHED
+        break
+      case 'ALL':
+      default:
+        // No additional filter
+        break
     }
 
     const projects = await prisma.project.findMany({
-      where: whereCondition,
+      where: whereClause,
       include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        },
         statusHistory: {
-          orderBy: { changedAt: "desc" },
-          take: 1,
           include: {
             user: {
-              select: { name: true, email: true }
+              select: {
+                id: true,
+                name: true,
+                email: true
+              }
             }
-          }
+          },
+          orderBy: { changedAt: 'desc' },
+          take: 5 // Limit to last 5 status changes
         }
       },
-      orderBy: { updatedAt: "desc" }
+      orderBy: { updatedAt: 'desc' }
     })
 
     return NextResponse.json(projects)
   } catch (error) {
-    console.error("Error fetching projects:", error)
+    console.error('Failed to fetch projects:', error)
     return NextResponse.json(
-      { error: "Failed to fetch projects" },
+      { error: 'Failed to fetch projects' },
       { status: 500 }
     )
   }
@@ -66,50 +79,71 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
-    
+    const session = await getServerSession()
     if (!session?.user?.email) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const body = await request.json() as CreateProjectRequest
+    const { name, description } = body
+
+    if (!name || name.trim().length === 0) {
+      return NextResponse.json(
+        { error: 'Project name is required' },
+        { status: 400 }
+      )
+    }
+
+    // Get user
     const user = await prisma.user.findUnique({
       where: { email: session.user.email }
     })
 
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 })
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
-    const { name, description } = await request.json()
-
-    if (!name) {
-      return NextResponse.json({ error: "Name is required" }, { status: 400 })
-    }
-
+    // Create project with initial status history
     const project = await prisma.project.create({
       data: {
-        name,
-        description: description || "",
+        name: name.trim(),
+        description: description?.trim(),
+        status: ProjectStatus.IN_PROGRESS,
         userId: user.id,
-        status: ProjectStatus.IN_PROGRESS
-      }
-    })
-
-    // Create initial status history entry
-    await prisma.projectStatusHistory.create({
-      data: {
-        projectId: project.id,
-        oldStatus: null,
-        newStatus: ProjectStatus.IN_PROGRESS,
-        changedBy: user.id
+        statusHistory: {
+          create: {
+            newStatus: ProjectStatus.IN_PROGRESS,
+            changedBy: user.id
+          }
+        }
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        },
+        statusHistory: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true
+              }
+            }
+          }
+        }
       }
     })
 
     return NextResponse.json(project, { status: 201 })
   } catch (error) {
-    console.error("Error creating project:", error)
+    console.error('Failed to create project:', error)
     return NextResponse.json(
-      { error: "Failed to create project" },
+      { error: 'Failed to create project' },
       { status: 500 }
     )
   }
