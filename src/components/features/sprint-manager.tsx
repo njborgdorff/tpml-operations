@@ -27,6 +27,7 @@ import {
   UserCheck,
   Rocket,
 } from 'lucide-react';
+import { SprintPrompt } from './sprint-prompt';
 
 interface Sprint {
   id: string;
@@ -742,6 +743,17 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Sprint Prompt - Show for active sprint */}
+      {activeSprint && (
+        <SprintPrompt
+          sprintId={activeSprint.id}
+          sprintNumber={activeSprint.number}
+          sprintName={activeSprint.name || undefined}
+          projectName={project.name}
+          isActive={true}
+        />
       )}
 
       {/* Progress Bar */}
