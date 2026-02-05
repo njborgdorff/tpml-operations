@@ -1,43 +1,27 @@
-import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
-import './globals.css'
+import './globals.css';
+import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
+import { Providers } from '@/components/providers/providers';
 
-const inter = Inter({ subsets: ['latin'] })
+const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Finished Project Management',
-  description: 'A simple project archiving system for managing completed projects',
-}
+  title: 'TPML Project Management',
+  description: 'A project management system for tracking project status',
+};
 
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
   return (
     <html lang="en">
       <body className={inter.className}>
-        <div className="min-h-screen bg-background">
-          <header className="border-b">
-            <div className="container mx-auto px-4 py-4">
-              <nav className="flex items-center justify-between">
-                <div className="font-semibold text-xl">
-                  Finished Project Management
-                </div>
-                <div className="flex items-center space-x-4">
-                  <span className="text-sm text-muted-foreground">
-                    Welcome back!
-                  </span>
-                </div>
-              </nav>
-            </div>
-          </header>
-          
-          <main className="container mx-auto px-4 py-8">
-            {children}
-          </main>
-        </div>
+        <Providers>
+          {children}
+        </Providers>
       </body>
     </html>
-  )
+  );
 }

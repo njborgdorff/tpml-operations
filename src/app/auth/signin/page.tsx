@@ -1,91 +1,83 @@
-"use client";
+'use client';
 
-import { getProviders, signIn, getSession } from "next-auth/react";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Github } from "lucide-react";
-
-interface Provider {
-  id: string;
-  name: string;
-  type: string;
-}
-
-const ProviderIcons: Record<string, React.ComponentType<any>> = {
-  github: Github,
-};
+import React, { useState } from 'react';
+import { signIn, getSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 export default function SignInPage() {
-  const [providers, setProviders] = useState<Record<string, Provider> | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  useEffect(() => {
-    const checkSession = async () => {
-      const session = await getSession();
-      if (session) {
-        router.push("/");
-        return;
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email) return;
+
+    setLoading(true);
+    try {
+      const result = await signIn('credentials', {
+        email,
+        name: name || email.split('@')[0],
+        redirect: false,
+      });
+
+      if (result?.ok) {
+        router.push('/');
       }
-      
-      const availableProviders = await getProviders();
-      setProviders(availableProviders);
-      setIsLoading(false);
-    };
-
-    checkSession();
-  }, [router]);
-
-  const handleSignIn = (providerId: string) => {
-    signIn(providerId, { callbackUrl: "/" });
+    } catch (error) {
+      console.error('Sign in error:', error);
+    } finally {
+      setLoading(false);
+    }
   };
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle>Loading...</CardTitle>
-          </CardHeader>
-        </Card>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Sign in to Project Manager</CardTitle>
+        <CardHeader>
+          <CardTitle>Sign In</CardTitle>
           <CardDescription>
-            Choose your preferred sign-in method
+            Enter your email to sign in to the project management system
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {providers &&
-            Object.values(providers).map((provider) => {
-              const Icon = ProviderIcons[provider.id];
-              
-              return (
-                <Button
-                  key={provider.name}
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => handleSignIn(provider.id)}
-                >
-                  {Icon && <Icon className="w-4 h-4 mr-2" />}
-                  Sign in with {provider.name}
-                </Button>
-              );
-            })}
-            
-          {(!providers || Object.keys(providers).length === 0) && (
-            <div className="text-center text-muted-foreground">
-              No authentication providers configured
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium mb-1">
+                Email
+              </label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="your.email@example.com"
+                required
+              />
             </div>
-          )}
+            <div>
+              <label htmlFor="name" className="block text-sm font-medium mb-1">
+                Name (optional)
+              </label>
+              <Input
+                id="name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Your Name"
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? 'Signing in...' : 'Sign In'}
+            </Button>
+          </form>
+          <p className="text-xs text-muted-foreground mt-4 text-center">
+            This is a development sign-in. In production, use proper OAuth providers.
+          </p>
         </CardContent>
       </Card>
     </div>
