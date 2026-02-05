@@ -1,37 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
-import { ProjectStatus } from '@/types/project'
-import { authOptions } from '@/lib/auth'
+import { ProjectStatus, ProjectFilters } from '@/types/project'
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
-    
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     const { searchParams } = new URL(request.url)
-    const filter = searchParams.get('filter') || 'all'
+    const status = searchParams.get('status') as ProjectStatus | 'ACTIVE' | 'FINISHED' | null
+    const userId = searchParams.get('userId')
 
-    let whereClause: any = {
-      user: {
-        email: session.user.email
-      }
+    let where: any = {}
+
+    if (userId) {
+      where.userId = userId
     }
 
-    // Apply status filtering
-    if (filter === 'active') {
-      whereClause.status = {
-        in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE]
+    if (status) {
+      if (status === 'ACTIVE') {
+        where.status = {
+          in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE]
+        }
+      } else if (status === 'FINISHED') {
+        where.status = ProjectStatus.FINISHED
+      } else {
+        where.status = status
       }
-    } else if (filter === 'finished') {
-      whereClause.status = ProjectStatus.FINISHED
     }
 
     const projects = await prisma.project.findMany({
-      where: whereClause,
+      where,
       include: {
         user: {
           select: {
@@ -41,16 +37,17 @@ export async function GET(request: NextRequest) {
           }
         }
       },
-      orderBy: {
-        updatedAt: 'desc'
-      }
+      orderBy: [
+        { status: 'asc' },
+        { updatedAt: 'desc' }
+      ]
     })
 
     return NextResponse.json(projects)
   } catch (error) {
     console.error('Error fetching projects:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Failed to fetch projects' },
       { status: 500 }
     )
   }
@@ -58,38 +55,22 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
-    
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     const body = await request.json()
-    const { name, description } = body
+    const { name, description, userId } = body
 
-    if (!name) {
+    if (!name || !userId) {
       return NextResponse.json(
-        { error: 'Project name is required' },
+        { error: 'Name and userId are required' },
         { status: 400 }
       )
     }
 
-    // Find the user
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email }
-    })
-
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
-    }
-
-    // Create the project
     const project = await prisma.project.create({
       data: {
         name,
         description,
-        status: ProjectStatus.IN_PROGRESS,
-        userId: user.id
+        userId,
+        status: ProjectStatus.IN_PROGRESS
       },
       include: {
         user: {
@@ -106,9 +87,8 @@ export async function POST(request: NextRequest) {
     await prisma.projectStatusHistory.create({
       data: {
         projectId: project.id,
-        oldStatus: null,
         newStatus: ProjectStatus.IN_PROGRESS,
-        changedBy: user.id
+        changedBy: userId
       }
     })
 
@@ -116,7 +96,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error creating project:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Failed to create project' },
       { status: 500 }
     )
   }

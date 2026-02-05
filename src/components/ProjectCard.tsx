@@ -1,104 +1,83 @@
-"use client"
+'use client'
 
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-
-interface Project {
-  id: string
-  name: string
-  description: string | null
-  status: string
-  createdAt: string
-  updatedAt: string
-  archivedAt: string | null
-  user: {
-    id: string
-    name: string | null
-    email: string
-  }
-}
+import React, { useState } from 'react'
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { ProjectStatusBadge } from '@/components/ProjectStatusBadge'
+import { Project, ProjectStatus } from '@/types/project'
+import { formatDistanceToNow } from 'date-fns'
 
 interface ProjectCardProps {
   project: Project
-  onStatusChange: (projectId: string, newStatus: string) => void
+  onStatusUpdate: (projectId: string, newStatus: ProjectStatus) => void
+  currentUserId: string
 }
 
-const statusColors = {
-  IN_PROGRESS: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'In Progress' },
-  COMPLETE: { bg: 'bg-green-100', text: 'text-green-800', label: 'Complete' },
-  APPROVED: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'Approved' },
-  FINISHED: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Finished' }
-}
+export function ProjectCard({ project, onStatusUpdate, currentUserId }: ProjectCardProps) {
+  const [isUpdating, setIsUpdating] = useState(false)
 
-export function ProjectCard({ project, onStatusChange }: ProjectCardProps) {
-  const statusStyle = statusColors[project.status as keyof typeof statusColors] || statusColors.IN_PROGRESS
-
-  const handleStatusChange = (newStatus: string) => {
-    onStatusChange(project.id, newStatus)
-  }
-
-  const getAvailableStatuses = () => {
-    switch (project.status) {
-      case 'IN_PROGRESS':
-        return ['COMPLETE']
-      case 'COMPLETE':
-        return ['IN_PROGRESS', 'APPROVED']
-      case 'APPROVED':
-        return ['COMPLETE', 'FINISHED']
-      case 'FINISHED':
-        return [] // No status changes allowed for finished projects
-      default:
-        return []
+  const handleStatusUpdate = async (newStatus: ProjectStatus) => {
+    if (project.userId !== currentUserId) return
+    
+    setIsUpdating(true)
+    try {
+      await onStatusUpdate(project.id, newStatus)
+    } finally {
+      setIsUpdating(false)
     }
   }
 
-  const availableStatuses = getAvailableStatuses()
+  const getNextStatus = () => {
+    switch (project.status) {
+      case ProjectStatus.IN_PROGRESS:
+        return { status: ProjectStatus.COMPLETE, label: 'Mark Complete' }
+      case ProjectStatus.COMPLETE:
+        return { status: ProjectStatus.APPROVED, label: 'Mark Approved' }
+      case ProjectStatus.APPROVED:
+        return { status: ProjectStatus.FINISHED, label: 'Move to Finished' }
+      default:
+        return null
+    }
+  }
+
+  const nextAction = getNextStatus()
+  const isOwner = project.userId === currentUserId
+  const canUpdate = isOwner && nextAction && project.status !== ProjectStatus.FINISHED
 
   return (
-    <Card>
+    <Card className="w-full">
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg">{project.name}</CardTitle>
-          <div className="flex items-center space-x-2">
-            <Badge className={`${statusStyle.bg} ${statusStyle.text}`}>
-              {statusStyle.label}
-            </Badge>
-            {availableStatuses.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    ⋯
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  {availableStatuses.map((status) => {
-                    const statusInfo = statusColors[status as keyof typeof statusColors]
-                    return (
-                      <DropdownMenuItem
-                        key={status}
-                        onClick={() => handleStatusChange(status)}
-                      >
-                        Mark as {statusInfo.label}
-                      </DropdownMenuItem>
-                    )
-                  })}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
+          <ProjectStatusBadge status={project.status} />
         </div>
         {project.description && (
           <CardDescription>{project.description}</CardDescription>
         )}
       </CardHeader>
-      <CardFooter className="text-sm text-gray-500">
-        <div className="flex justify-between w-full">
-          <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
-          <span>Updated: {new Date(project.updatedAt).toLocaleDateString()}</span>
+      <CardContent>
+        <div className="text-sm text-muted-foreground space-y-1">
+          <div>Created {formatDistanceToNow(new Date(project.createdAt))} ago</div>
+          <div>Last updated {formatDistanceToNow(new Date(project.updatedAt))} ago</div>
+          {project.archivedAt && (
+            <div>Archived {formatDistanceToNow(new Date(project.archivedAt))} ago</div>
+          )}
+          {project.user && (
+            <div>Owner: {project.user.name || project.user.email}</div>
+          )}
         </div>
-      </CardFooter>
+      </CardContent>
+      {canUpdate && (
+        <CardFooter>
+          <Button 
+            onClick={() => handleStatusUpdate(nextAction.status)}
+            disabled={isUpdating}
+            className="w-full"
+          >
+            {isUpdating ? 'Updating...' : nextAction.label}
+          </Button>
+        </CardFooter>
+      )}
     </Card>
   )
 }

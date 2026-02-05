@@ -10,10 +10,10 @@ export interface Project {
   name: string
   description?: string
   status: ProjectStatus
-  userId: string
   createdAt: Date
   updatedAt: Date
   archivedAt?: Date
+  userId: string
   user?: {
     id: string
     name?: string
@@ -26,8 +26,8 @@ export interface ProjectStatusHistory {
   projectId: string
   oldStatus?: ProjectStatus
   newStatus: ProjectStatus
-  changedBy: string
   changedAt: Date
+  changedBy: string
   user: {
     id: string
     name?: string
@@ -35,17 +35,7 @@ export interface ProjectStatusHistory {
   }
 }
 
-export interface ProjectWithHistory extends Project {
-  statusHistory: ProjectStatusHistory[]
-}
-
-export type ProjectFilter = 'all' | 'active' | 'finished'
-
-export interface UpdateProjectStatusRequest {
-  status: ProjectStatus
-}
-
-export interface CreateProjectRequest {
-  name: string
-  description?: string
+export interface ProjectFilters {
+  status?: ProjectStatus | 'ACTIVE' | 'FINISHED'
+  userId?: string
 }

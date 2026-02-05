@@ -1,57 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
 import { ProjectStatus } from '@/types/project'
-import { authOptions } from '@/lib/auth'
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions)
-    
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
+    const { id } = params
     const body = await request.json()
-    const { status } = body
+    const { status, userId } = body
 
-    if (!status || !Object.values(ProjectStatus).includes(status)) {
+    if (!status || !userId) {
       return NextResponse.json(
-        { error: 'Valid status is required' },
+        { error: 'Status and userId are required' },
         { status: 400 }
       )
     }
 
-    // Find the user
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email }
-    })
-
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    // Validate status enum
+    if (!Object.values(ProjectStatus).includes(status)) {
+      return NextResponse.json(
+        { error: 'Invalid status value' },
+        { status: 400 }
+      )
     }
 
-    // Find the project and verify ownership
-    const project = await prisma.project.findFirst({
-      where: {
-        id: params.id,
-        userId: user.id
-      }
+    // Get current project to track old status
+    const currentProject = await prisma.project.findUnique({
+      where: { id },
+      select: { status: true, userId: true }
     })
 
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+    if (!currentProject) {
+      return NextResponse.json(
+        { error: 'Project not found' },
+        { status: 404 }
+      )
     }
 
-    // Update the project status
+    // Check if user owns the project
+    if (currentProject.userId !== userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized to update this project' },
+        { status: 403 }
+      )
+    }
+
+    // Update project status
     const updatedProject = await prisma.project.update({
-      where: { id: params.id },
-      data: { 
+      where: { id },
+      data: {
         status,
-        archivedAt: status === ProjectStatus.FINISHED ? new Date() : project.archivedAt
+        archivedAt: status === ProjectStatus.FINISHED ? new Date() : null
       },
       include: {
         user: {
@@ -67,10 +68,10 @@ export async function PATCH(
     // Create status history entry
     await prisma.projectStatusHistory.create({
       data: {
-        projectId: project.id,
-        oldStatus: project.status,
+        projectId: id,
+        oldStatus: currentProject.status,
         newStatus: status,
-        changedBy: user.id
+        changedBy: userId
       }
     })
 
@@ -78,7 +79,7 @@ export async function PATCH(
   } catch (error) {
     console.error('Error updating project status:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Failed to update project status' },
       { status: 500 }
     )
   }

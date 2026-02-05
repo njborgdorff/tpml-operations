@@ -11,18 +11,47 @@ datasource db {
 }
 
 model User {
-  id       String @id @default(cuid())
-  email    String @unique
-  name     String?
-  role     String @default("user")
-  
-  projects               Project[]
-  projectStatusChanges   ProjectStatusHistory[]
-  
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  role      String   @default("USER")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
+  projects              Project[]
+  projectStatusChanges  ProjectStatusHistory[]
+
   @@map("users")
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  status      ProjectStatus @default(IN_PROGRESS)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  archivedAt  DateTime?
+  userId      String
+
+  user    User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  history ProjectStatusHistory[]
+
+  @@map("projects")
+}
+
+model ProjectStatusHistory {
+  id        String   @id @default(cuid())
+  projectId String
+  oldStatus ProjectStatus?
+  newStatus ProjectStatus
+  changedAt DateTime @default(now())
+  changedBy String
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [changedBy], references: [id])
+
+  @@map("project_status_history")
 }
 
 enum ProjectStatus {
@@ -30,38 +59,4 @@ enum ProjectStatus {
   COMPLETE
   APPROVED
   FINISHED
-}
-
-model Project {
-  id          String        @id @default(cuid())
-  name        String
-  description String?
-  status      ProjectStatus @default(IN_PROGRESS)
-  
-  userId      String
-  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  statusHistory ProjectStatusHistory[]
-  
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  archivedAt  DateTime?
-  
-  @@map("projects")
-}
-
-model ProjectStatusHistory {
-  id        String        @id @default(cuid())
-  projectId String
-  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  
-  oldStatus ProjectStatus?
-  newStatus ProjectStatus
-  
-  changedBy String
-  user      User          @relation(fields: [changedBy], references: [id])
-  
-  changedAt DateTime      @default(now())
-  
-  @@map("project_status_history")
 }
