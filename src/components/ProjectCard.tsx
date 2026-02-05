@@ -1,170 +1,128 @@
-"use client"
+'use client';
 
-import { useState } from "react"
-import { ProjectStatus } from "@prisma/client"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { formatDate } from "@/lib/utils"
-import { MoreVertical, Clock, CheckCircle, Archive, AlertCircle } from "lucide-react"
-
-interface Project {
-  id: string
-  name: string
-  description?: string | null
-  status: ProjectStatus
-  createdAt: string
-  updatedAt: string
-  archivedAt?: string | null
-  user: {
-    id: string
-    name?: string | null
-    email?: string | null
-  }
-}
+import { useState } from 'react';
+import { Project, ProjectStatus } from '@/lib/types';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ProjectStatusBadge } from './ProjectStatusBadge';
+import { ProjectStatusSelect } from './ProjectStatusSelect';
+import { formatDate, formatDateTime } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 
 interface ProjectCardProps {
-  project: Project
-  onStatusUpdate: (projectId: string, newStatus: ProjectStatus) => Promise<void>
+  project: Project;
+  onStatusChange?: (projectId: string, newStatus: ProjectStatus) => void;
+  onStatusChangeLoading?: boolean;
+  currentUserId?: string;
 }
 
-const statusConfig = {
-  [ProjectStatus.IN_PROGRESS]: {
-    label: "In Progress",
-    variant: "info" as const,
-    icon: Clock,
-  },
-  [ProjectStatus.COMPLETE]: {
-    label: "Complete",
-    variant: "warning" as const,
-    icon: CheckCircle,
-  },
-  [ProjectStatus.APPROVED]: {
-    label: "Approved",
-    variant: "success" as const,
-    icon: CheckCircle,
-  },
-  [ProjectStatus.ARCHIVED]: {
-    label: "Archived",
-    variant: "secondary" as const,
-    icon: Archive,
-  },
-}
+export function ProjectCard({ 
+  project, 
+  onStatusChange, 
+  onStatusChangeLoading = false,
+  currentUserId = 'temp-user' // TODO: Replace with actual user ID from auth
+}: ProjectCardProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [selectedStatus, setSelectedStatus] = useState<ProjectStatus>(project.status as ProjectStatus);
 
-export function ProjectCard({ project, onStatusUpdate }: ProjectCardProps) {
-  const [isUpdating, setIsUpdating] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleStatusChange = async (newStatus: ProjectStatus) => {
-    if (newStatus === project.status) return
-
-    setIsUpdating(true)
-    setError(null)
-
-    try {
-      await onStatusUpdate(project.id, newStatus)
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to update status"
-      setError(errorMessage)
-    } finally {
-      setIsUpdating(false)
+  const handleStatusChange = async () => {
+    if (onStatusChange && selectedStatus !== project.status) {
+      await onStatusChange(project.id, selectedStatus);
     }
-  }
+    setIsEditing(false);
+  };
 
-  const statusInfo = statusConfig[project.status]
-  const StatusIcon = statusInfo.icon
+  const handleCancel = () => {
+    setSelectedStatus(project.status as ProjectStatus);
+    setIsEditing(false);
+  };
 
-  const canMoveToArchive = project.status === ProjectStatus.APPROVED
+  const latestHistory = project.statusHistory?.[0];
 
   return (
     <Card className="w-full">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
-          <div className="flex-1 min-w-0">
-            <CardTitle className="text-lg font-semibold truncate">
-              {project.name}
-            </CardTitle>
+          <div className="flex-1">
+            <CardTitle className="text-lg">{project.name}</CardTitle>
             {project.description && (
-              <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+              <CardDescription className="mt-1">
                 {project.description}
-              </p>
+              </CardDescription>
             )}
           </div>
-          <Button variant="ghost" size="icon" className="ml-2">
-            <MoreVertical className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-2">
+            {!isEditing ? (
+              <>
+                <ProjectStatusBadge status={project.status as ProjectStatus} />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsEditing(true)}
+                  className="text-xs"
+                >
+                  Edit
+                </Button>
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
+                <ProjectStatusSelect
+                  value={selectedStatus}
+                  onValueChange={setSelectedStatus}
+                  disabled={onStatusChangeLoading}
+                  className="w-32"
+                />
+                <Button
+                  size="sm"
+                  onClick={handleStatusChange}
+                  disabled={onStatusChangeLoading}
+                  className="text-xs"
+                >
+                  Save
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCancel}
+                  disabled={onStatusChangeLoading}
+                  className="text-xs"
+                >
+                  Cancel
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
       </CardHeader>
-      
       <CardContent>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <StatusIcon className="h-4 w-4" />
-              <Badge variant={statusInfo.variant}>
-                {statusInfo.label}
-              </Badge>
-            </div>
-            
-            {project.status !== ProjectStatus.ARCHIVED && (
-              <Select
-                value={project.status}
-                onValueChange={handleStatusChange}
-                disabled={isUpdating}
-              >
-                <SelectTrigger className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ProjectStatus.IN_PROGRESS}>
-                    In Progress
-                  </SelectItem>
-                  <SelectItem value={ProjectStatus.COMPLETE}>
-                    Complete
-                  </SelectItem>
-                  <SelectItem value={ProjectStatus.APPROVED}>
-                    Approved
-                  </SelectItem>
-                  {canMoveToArchive && (
-                    <SelectItem value={ProjectStatus.ARCHIVED}>
-                      Archive Project
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-            )}
+        <div className="space-y-2 text-sm text-muted-foreground">
+          <div className="flex justify-between">
+            <span>Created:</span>
+            <span>{formatDate(project.createdAt)}</span>
           </div>
-
-          {error && (
-            <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
-              <AlertCircle className="h-4 w-4" />
-              <span>{error}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setError(null)}
-                className="ml-auto"
-              >
-                Dismiss
-              </Button>
+          <div className="flex justify-between">
+            <span>Last Updated:</span>
+            <span>{formatDate(project.updatedAt)}</span>
+          </div>
+          {project.archivedAt && (
+            <div className="flex justify-between">
+              <span>Archived:</span>
+              <span>{formatDate(project.archivedAt)}</span>
             </div>
           )}
-
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Created {formatDate(project.createdAt)}</span>
-            {project.archivedAt && (
-              <span>Archived {formatDate(project.archivedAt)}</span>
-            )}
-          </div>
+          {latestHistory && (
+            <div className="flex justify-between">
+              <span>Status Changed:</span>
+              <span>{formatDateTime(latestHistory.changedAt)}</span>
+            </div>
+          )}
+          {project.user && (
+            <div className="flex justify-between">
+              <span>Owner:</span>
+              <span>{project.user.name || project.user.email}</span>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }

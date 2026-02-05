@@ -1,156 +1,161 @@
 'use client';
 
-import { useProjects } from '@/hooks/use-projects';
-import { ProjectCard } from '@/components/project-card';
-import { ProjectFilterComponent } from '@/components/project-filter';
-import { Button } from '@/components/ui/button';
 import { useState } from 'react';
+import { ProjectCard } from '@/components/ProjectCard';
+import { ProjectFilter } from '@/components/ProjectFilter';
+import { useProjects } from '@/hooks/useProjects';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
-export default function Dashboard() {
-  const {
-    projects,
-    loading,
-    error,
-    filter,
-    projectCounts,
-    updateProjectStatus,
-    createProject,
-    changeFilter,
-  } = useProjects();
+export default function DashboardPage() {
+  const [filter, setFilter] = useState<'ALL' | 'ACTIVE' | 'FINISHED'>('ACTIVE');
+  
+  const { 
+    projects, 
+    loading, 
+    error, 
+    statusChangeLoading, 
+    refetch, 
+    updateProjectStatus 
+  } = useProjects({ filter });
 
-  const [isCreating, setIsCreating] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
-  const [newProjectDescription, setNewProjectDescription] = useState('');
-  const [showCreateForm, setShowCreateForm] = useState(false);
-
-  const handleCreateProject = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newProjectName.trim()) return;
-
-    setIsCreating(true);
-    try {
-      await createProject(newProjectName.trim(), newProjectDescription.trim() || undefined);
-      setNewProjectName('');
-      setNewProjectDescription('');
-      setShowCreateForm(false);
-    } catch (error) {
-      // Error is handled in the hook
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
-  if (loading && projects.length === 0) {
+  if (loading) {
     return (
       <div className="container mx-auto py-8">
-        <div className="flex items-center justify-center h-64">
-          <div className="text-lg">Loading projects...</div>
+        <div className="flex items-center justify-center min-h-96">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading projects...</p>
+          </div>
         </div>
       </div>
     );
   }
 
+  const getFilterTitle = () => {
+    switch (filter) {
+      case 'ACTIVE':
+        return 'Active Projects';
+      case 'FINISHED':
+        return 'Finished Projects';
+      default:
+        return 'All Projects';
+    }
+  };
+
+  const getFilterDescription = () => {
+    switch (filter) {
+      case 'ACTIVE':
+        return 'Projects that are in progress or complete, but not yet finished';
+      case 'FINISHED':
+        return 'Projects that have been archived and completed';
+      default:
+        return 'All projects regardless of status';
+    }
+  };
+
   return (
-    <div className="container mx-auto py-8">
-      <div className="flex items-center justify-between mb-8">
+    <div className="container mx-auto py-8 space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Project Dashboard</h1>
           <p className="text-muted-foreground">
             Manage your projects and track their progress
           </p>
         </div>
-        
-        <Button onClick={() => setShowCreateForm(!showCreateForm)}>
-          {showCreateForm ? 'Cancel' : 'New Project'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <ProjectFilter
+            value={filter}
+            onValueChange={setFilter}
+            className="w-48"
+          />
+          <Button onClick={refetch} variant="outline">
+            Refresh
+          </Button>
+        </div>
       </div>
 
+      {/* Error Display */}
       {error && (
-        <div className="bg-destructive/10 border border-destructive/20 text-destructive px-4 py-3 rounded-md mb-6">
-          {error}
-        </div>
-      )}
-
-      {showCreateForm && (
-        <div className="bg-card border rounded-lg p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">Create New Project</h2>
-          <form onSubmit={handleCreateProject} className="space-y-4">
-            <div>
-              <label htmlFor="name" className="block text-sm font-medium mb-2">
-                Project Name *
-              </label>
-              <input
-                type="text"
-                id="name"
-                value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
-                className="w-full px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="Enter project name"
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="description" className="block text-sm font-medium mb-2">
-                Description (Optional)
-              </label>
-              <textarea
-                id="description"
-                value={newProjectDescription}
-                onChange={(e) => setNewProjectDescription(e.target.value)}
-                className="w-full px-3 py-2 border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="Enter project description"
-                rows={3}
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button type="submit" disabled={isCreating || !newProjectName.trim()}>
-                {isCreating ? 'Creating...' : 'Create Project'}
-              </Button>
-              <Button 
-                type="button" 
-                variant="outline" 
-                onClick={() => setShowCreateForm(false)}
-              >
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      <ProjectFilterComponent
-        currentFilter={filter}
-        onFilterChange={changeFilter}
-        projectCounts={projectCounts}
-      />
-
-      {projects.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="text-lg font-medium mb-2">No projects found</div>
-          <div className="text-muted-foreground mb-4">
-            {filter === 'active' && 'No active projects. '}
-            {filter === 'finished' && 'No finished projects. '}
-            {filter === 'all' && 'No projects created yet. '}
-            {filter !== 'all' && 'Try changing the filter or '}
-            Create your first project to get started.
-          </div>
-          {!showCreateForm && (
-            <Button onClick={() => setShowCreateForm(true)}>
-              Create Project
+        <Card className="border-destructive">
+          <CardHeader>
+            <CardTitle className="text-destructive">Error</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm">{error}</p>
+            <Button onClick={refetch} className="mt-2" size="sm">
+              Try Again
             </Button>
-          )}
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {projects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              onStatusUpdate={updateProjectStatus}
-            />
-          ))}
-        </div>
+          </CardContent>
+        </Card>
       )}
+
+      {/* Projects Section */}
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold">{getFilterTitle()}</h2>
+          <p className="text-sm text-muted-foreground">
+            {getFilterDescription()}
+          </p>
+        </div>
+
+        {projects.length === 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>No Projects Found</CardTitle>
+              <CardDescription>
+                {filter === 'ACTIVE' 
+                  ? "No active projects to display. Create a new project to get started."
+                  : filter === 'FINISHED'
+                  ? "No finished projects yet. Complete and approve some projects first."
+                  : "No projects found. Create your first project to get started."
+                }
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {projects.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                onStatusChange={updateProjectStatus}
+                onStatusChangeLoading={statusChangeLoading}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardDescription>Total Projects</CardDescription>
+            <CardTitle className="text-2xl">{projects.length}</CardTitle>
+          </CardHeader>
+        </Card>
+        
+        <Card>
+          <CardHeader className="pb-3">
+            <CardDescription>Filter Applied</CardDescription>
+            <CardTitle className="text-lg">{getFilterTitle()}</CardTitle>
+          </CardHeader>
+        </Card>
+        
+        <Card>
+          <CardHeader className="pb-3">
+            <CardDescription>Last Updated</CardDescription>
+            <CardTitle className="text-sm">
+              {projects.length > 0 
+                ? new Date(Math.max(...projects.map(p => new Date(p.updatedAt).getTime()))).toLocaleDateString()
+                : 'No projects'
+              }
+            </CardTitle>
+          </CardHeader>
+        </Card>
+      </div>
     </div>
   );
 }

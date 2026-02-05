@@ -14,11 +14,17 @@ export interface Project {
   updatedAt: Date;
   archivedAt?: Date;
   userId: string;
-  user?: {
-    id: string;
-    name?: string;
-    email: string;
-  };
+  user?: User;
+  statusHistory?: ProjectStatusHistory[];
+}
+
+export interface User {
+  id: string;
+  email: string;
+  name?: string;
+  role: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ProjectStatusHistory {
@@ -28,24 +34,24 @@ export interface ProjectStatusHistory {
   newStatus: ProjectStatus;
   changedAt: Date;
   changedBy: string;
-  user: {
-    id: string;
-    name?: string;
-    email: string;
-  };
+  user?: User;
 }
 
 export interface ProjectFilter {
-  status?: ProjectStatus[];
-  showActive?: boolean;
-  showFinished?: boolean;
+  status?: ProjectStatus | 'ACTIVE' | 'FINISHED';
+  userId?: string;
 }
 
-export interface UpdateProjectStatusRequest {
-  status: ProjectStatus;
-}
+export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
+  [ProjectStatus.IN_PROGRESS]: 'In Progress',
+  [ProjectStatus.COMPLETE]: 'Complete',
+  [ProjectStatus.APPROVED]: 'Approved',
+  [ProjectStatus.FINISHED]: 'Finished'
+};
 
-export interface CreateProjectRequest {
-  name: string;
-  description?: string;
-}
+export const PROJECT_STATUS_COLORS: Record<ProjectStatus, string> = {
+  [ProjectStatus.IN_PROGRESS]: 'bg-blue-100 text-blue-800',
+  [ProjectStatus.COMPLETE]: 'bg-yellow-100 text-yellow-800',
+  [ProjectStatus.APPROVED]: 'bg-green-100 text-green-800',
+  [ProjectStatus.FINISHED]: 'bg-gray-100 text-gray-800'
+};
