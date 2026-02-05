@@ -280,7 +280,7 @@ export async function applyOperationsViaGitHub(
 
   try {
     // Get the current commit SHA for the branch
-    let branchResponse = await fetch(
+    const branchResponse = await fetch(
       `https://api.github.com/repos/${repo}/git/ref/heads/${branch}`,
       {
         headers: {
