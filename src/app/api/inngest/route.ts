@@ -12,7 +12,7 @@ import { serve } from 'inngest/next';
 import { Inngest } from 'inngest';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaClient } from '@prisma/client';
-import { runImplementation, applyOperationsViaGitHub, validateGeneratedCode, getDeploymentStatus, FileOperation, ValidationResult, DeploymentStatus } from '@/lib/implementation/file-tools';
+import { runImplementation, applyOperationsViaGitHub, validateGeneratedCode, getDeploymentStatus, FileOperation, ValidationResult } from '@/lib/implementation/file-tools';
 
 // Note: Implementation now uses Claude tool_use to generate actual file operations
 // These can be applied via GitHub API (serverless) or local worker
