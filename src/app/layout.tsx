@@ -1,12 +1,14 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
+import { Providers } from './providers'
+import { Navbar } from '@/components/layout/navbar'
 import './globals.css'
 
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Finished Project Management',
-  description: 'A simple project archiving system for managing completed projects',
+  title: 'Project Manager - TPML',
+  description: 'Finished Project Management System',
 }
 
 export default function RootLayout({
@@ -17,26 +19,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <div className="min-h-screen bg-background">
-          <header className="border-b">
-            <div className="container mx-auto px-4 py-4">
-              <nav className="flex items-center justify-between">
-                <div className="font-semibold text-xl">
-                  Finished Project Management
-                </div>
-                <div className="flex items-center space-x-4">
-                  <span className="text-sm text-muted-foreground">
-                    Welcome back!
-                  </span>
-                </div>
-              </nav>
-            </div>
-          </header>
-          
-          <main className="container mx-auto px-4 py-8">
-            {children}
-          </main>
-        </div>
+        <Providers>
+          <div className="min-h-screen bg-background">
+            <Navbar />
+            <main>{children}</main>
+          </div>
+        </Providers>
       </body>
     </html>
   )

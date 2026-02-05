@@ -3,8 +3,6 @@ import { getServerSession } from 'next-auth/next'
 import { prisma } from '@/lib/prisma'
 import { authOptions } from '@/lib/auth'
 
-const VALID_STATUSES = ['IN_PROGRESS', 'COMPLETE', 'APPROVED']
-
 export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -16,53 +14,39 @@ export async function PATCH(
     }
 
     const projectId = params.id
-    const body = await request.json()
-    const { status } = body
 
-    if (!status || !VALID_STATUSES.includes(status)) {
-      return NextResponse.json(
-        { error: 'Invalid status. Must be one of: IN_PROGRESS, COMPLETE, APPROVED' },
-        { status: 400 }
-      )
-    }
-
-    // Get the current project
-    const currentProject = await prisma.project.findUnique({
-      where: { id: projectId }
+    // Get the project first to check status and ownership
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      include: {
+        user: true
+      }
     })
 
-    if (!currentProject) {
+    if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
     // Check if user owns the project or is admin
-    if (currentProject.userId !== session.user.id && session.user.role !== 'admin') {
+    if (project.userId !== session.user.id && session.user.role !== 'admin') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Don't allow status changes for finished projects
-    if (currentProject.status === 'FINISHED') {
+    // Only APPROVED projects can be moved to FINISHED
+    if (project.status !== 'APPROVED') {
       return NextResponse.json(
-        { error: 'Cannot change status of finished projects' },
+        { error: 'Only approved projects can be moved to finished' },
         { status: 400 }
       )
     }
 
-    // Update project status
+    // Update project status to FINISHED and set archivedAt
     const updatedProject = await prisma.project.update({
       where: { id: projectId },
       data: {
-        status: status as any,
+        status: 'FINISHED',
+        archivedAt: new Date(),
         updatedAt: new Date()
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true
-          }
-        }
       }
     })
 
@@ -70,8 +54,8 @@ export async function PATCH(
     await prisma.projectStatusHistory.create({
       data: {
         projectId: projectId,
-        oldStatus: currentProject.status as any,
-        newStatus: status as any,
+        oldStatus: project.status,
+        newStatus: 'FINISHED',
         changedBy: session.user.id,
         changedAt: new Date()
       }
@@ -79,7 +63,7 @@ export async function PATCH(
 
     return NextResponse.json(updatedProject)
   } catch (error) {
-    console.error('Error updating project status:', error)
+    console.error('Error archiving project:', error)
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
