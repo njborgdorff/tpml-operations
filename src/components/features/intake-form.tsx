@@ -57,7 +57,6 @@ export function IntakeForm({ clients }: IntakeFormProps) {
     register,
     handleSubmit,
     setValue,
-    watch,
     formState: { errors: rawErrors },
   } = useForm<IntakeData>({
     resolver: zodResolver(IntakeSchema),
