@@ -1,52 +1,120 @@
-import 'dotenv/config';
-import { PrismaClient } from '@prisma/client';
-import bcrypt from 'bcryptjs';
+import { PrismaClient, ProjectStatus } from '@prisma/client'
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient()
 
 async function main() {
-  // Create owner user
-  const passwordHash = await bcrypt.hash('owner123', 10);
+  console.log('🌱 Seeding database...')
 
-  const owner = await prisma.user.upsert({
-    where: { email: 'njborgdorff@totalproductmgmt.com' },
+  // Create test users
+  const user1 = await prisma.user.upsert({
+    where: { email: 'john@example.com' },
     update: {},
     create: {
-      email: 'njborgdorff@totalproductmgmt.com',
-      name: 'Nick Borgdorff',
-      passwordHash,
-      role: 'OWNER',
+      email: 'john@example.com',
+      name: 'John Doe',
+      role: 'user',
     },
-  });
+  })
 
-  console.log('Created owner user:', owner.email);
+  const user2 = await prisma.user.upsert({
+    where: { email: 'jane@example.com' },
+    update: {},
+    create: {
+      email: 'jane@example.com',
+      name: 'Jane Smith',
+      role: 'user',
+    },
+  })
 
-  // Create default clients
-  const clients = [
-    { name: 'SBE Medical, Inc.', slug: 'sbe-medical' },
-    { name: 'TPML (Internal)', slug: 'tpml-internal' },
-  ];
+  const admin = await prisma.user.upsert({
+    where: { email: 'admin@example.com' },
+    update: {},
+    create: {
+      email: 'admin@example.com',
+      name: 'Admin User',
+      role: 'admin',
+    },
+  })
 
-  for (const client of clients) {
-    await prisma.client.upsert({
-      where: { slug: client.slug },
-      update: {},
-      create: client,
-    });
-    console.log('Created client:', client.name);
-  }
+  // Create sample projects
+  const project1 = await prisma.project.create({
+    data: {
+      name: 'Website Redesign',
+      description: 'Complete overhaul of the company website with modern design and improved UX',
+      status: ProjectStatus.IN_PROGRESS,
+      userId: user1.id,
+    },
+  })
 
-  console.log('\nSeed complete!');
-  console.log('Login with:');
-  console.log('  Email: nick@totalproductmgmt.com');
-  console.log('  Password: owner123');
+  const project2 = await prisma.project.create({
+    data: {
+      name: 'Mobile App Development',
+      description: 'Native mobile application for iOS and Android platforms',
+      status: ProjectStatus.COMPLETE,
+      userId: user2.id,
+    },
+  })
+
+  const project3 = await prisma.project.create({
+    data: {
+      name: 'Database Migration',
+      description: 'Migrate legacy database to new cloud infrastructure',
+      status: ProjectStatus.APPROVED,
+      userId: admin.id,
+    },
+  })
+
+  const project4 = await prisma.project.create({
+    data: {
+      name: 'Marketing Campaign',
+      description: 'Q4 digital marketing campaign for product launch',
+      status: ProjectStatus.FINISHED,
+      archivedAt: new Date(),
+      userId: user1.id,
+    },
+  })
+
+  // Create status history entries
+  await prisma.projectStatusHistory.create({
+    data: {
+      projectId: project2.id,
+      oldStatus: ProjectStatus.IN_PROGRESS,
+      newStatus: ProjectStatus.COMPLETE,
+      changedBy: user2.id,
+    },
+  })
+
+  await prisma.projectStatusHistory.create({
+    data: {
+      projectId: project3.id,
+      oldStatus: ProjectStatus.COMPLETE,
+      newStatus: ProjectStatus.APPROVED,
+      changedBy: admin.id,
+    },
+  })
+
+  await prisma.projectStatusHistory.create({
+    data: {
+      projectId: project4.id,
+      oldStatus: ProjectStatus.APPROVED,
+      newStatus: ProjectStatus.FINISHED,
+      changedBy: user1.id,
+    },
+  })
+
+  console.log('✅ Database seeded successfully!')
+  console.log('Test users created:')
+  console.log('- john@example.com (John Doe)')
+  console.log('- jane@example.com (Jane Smith)')
+  console.log('- admin@example.com (Admin User)')
+  console.log('Sample projects created with various statuses.')
 }
 
 main()
   .catch((e) => {
-    console.error(e);
-    process.exit(1);
+    console.error('❌ Seeding failed:', e)
+    process.exit(1)
   })
   .finally(async () => {
-    await prisma.$disconnect();
-  });
+    await prisma.$disconnect()
+  })
