@@ -4,6 +4,16 @@ import { z } from 'zod';
 export const ProjectTypeEnum = z.enum(['NEW_PROJECT', 'NEW_FEATURE', 'BUG_FIX']);
 export type ProjectType = z.infer<typeof ProjectTypeEnum>;
 
+// Reference document schema for file uploads
+export const ReferenceDocumentSchema = z.object({
+  name: z.string().min(1, 'File name is required'),
+  type: z.string().min(1, 'File type is required'),
+  size: z.number().positive('File size must be positive'),
+  content: z.string().min(1, 'File content is required'), // base64 encoded
+});
+
+export type ReferenceDocument = z.infer<typeof ReferenceDocumentSchema>;
+
 // Base schema for all project types
 const BaseSchema = z.object({
   name: z
@@ -18,6 +28,11 @@ const BaseSchema = z.object({
     .string()
     .optional()
     .describe('Existing project/repo to work in. Required for NEW_FEATURE and BUG_FIX.'),
+  referenceDocuments: z
+    .array(ReferenceDocumentSchema)
+    .max(10, 'Maximum 10 reference documents allowed')
+    .optional()
+    .describe('Reference documents like specs, design docs, screenshots, etc.'),
 });
 
 // Full intake for NEW_PROJECT - requires all details

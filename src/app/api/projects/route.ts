@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
-import { IntakeSchema, IntakeData, NewProjectData, NewFeatureData, BugFixData } from '@/types';
+import { IntakeSchema, IntakeData, NewProjectData, NewFeatureData, BugFixData, ReferenceDocument } from '@/types';
 import { syncKnowledgeBase } from '@/lib/knowledge/sync';
 import fs from 'fs/promises';
 import path from 'path';
@@ -180,6 +180,26 @@ export async function POST(request: Request) {
     });
 
     console.log(`[Projects] Created ${data.projectType}: ${project.name} (${slug})`);
+
+    // Store reference documents if provided
+    const referenceDocuments = data.referenceDocuments as ReferenceDocument[] | undefined;
+    if (referenceDocuments && referenceDocuments.length > 0) {
+      try {
+        await prisma.referenceDocument.createMany({
+          data: referenceDocuments.map(doc => ({
+            projectId: project.id,
+            name: doc.name,
+            mimeType: doc.type,
+            size: doc.size,
+            content: doc.content,
+          })),
+        });
+        console.log(`[Projects] Stored ${referenceDocuments.length} reference documents for ${slug}`);
+      } catch (docError) {
+        console.error(`[Projects] Failed to store reference documents for ${slug}:`, docError);
+        // Don't fail the request - document storage is secondary
+      }
+    }
 
     // Only create project folder structure for NEW_PROJECT type
     // NEW_FEATURE and BUG_FIX use existing codebases

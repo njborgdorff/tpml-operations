@@ -99,12 +99,13 @@ model Project {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  client         Client   @relation(fields: [clientId], references: [id])
-  owner          User     @relation(fields: [ownerId], references: [id])
-  implementer    User?    @relation("ImplementerProjects", fields: [implementerId], references: [id])
-  sprints        Sprint[]
-  conversations  Conversation[]
-  artifacts      Artifact[]
+  client             Client   @relation(fields: [clientId], references: [id])
+  owner              User     @relation(fields: [ownerId], references: [id])
+  implementer        User?    @relation("ImplementerProjects", fields: [implementerId], references: [id])
+  sprints            Sprint[]
+  conversations      Conversation[]
+  artifacts          Artifact[]
+  referenceDocuments ReferenceDocument[]
 
   @@map("projects")
 }
@@ -239,6 +240,30 @@ enum ArtifactType {
   HANDOFF_CTO_TO_IMPLEMENTER
   SUMMARY
   SPRINT_STATUS
+}
+
+// ============================================
+// REFERENCE DOCUMENTS
+// ============================================
+
+model ReferenceDocument {
+  id        String   @id @default(cuid())
+  projectId String
+
+  // File metadata
+  name      String          // Original filename
+  mimeType  String          // MIME type (e.g., application/pdf)
+  size      Int             // File size in bytes
+
+  // Content storage (base64 encoded for smaller files)
+  content   String   @db.Text
+
+  createdAt DateTime @default(now())
+
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("reference_documents")
 }
 
 // ============================================
