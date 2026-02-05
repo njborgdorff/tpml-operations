@@ -18,39 +18,36 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
-  projects              Project[]
-  projectStatusChanges  ProjectStatusHistory[]
+  projects      Project[]
+  statusChanges ProjectStatusHistory[]
 
   @@map("users")
 }
 
 model Project {
-  id          String        @id @default(cuid())
+  id          String            @id @default(cuid())
   name        String
   description String?
-  status      ProjectStatus @default(IN_PROGRESS)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  status      ProjectStatus     @default(IN_PROGRESS)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
   archivedAt  DateTime?
   userId      String
 
-  // Relations
-  user           User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  statusHistory  ProjectStatusHistory[]
+  user          User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  statusHistory ProjectStatusHistory[]
 
   @@map("projects")
 }
 
 model ProjectStatusHistory {
-  id         String        @id @default(cuid())
-  projectId  String
-  oldStatus  ProjectStatus?
-  newStatus  ProjectStatus
-  changedAt  DateTime      @default(now())
-  changedBy  String
+  id        String        @id @default(cuid())
+  projectId String
+  oldStatus ProjectStatus?
+  newStatus ProjectStatus
+  changedAt DateTime      @default(now())
+  changedBy String
 
-  // Relations
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [changedBy], references: [id])
 
@@ -61,5 +58,5 @@ enum ProjectStatus {
   IN_PROGRESS
   COMPLETE
   APPROVED
-  ARCHIVED
+  FINISHED
 }

@@ -1,45 +1,42 @@
-import { NextRequest, NextResponse } from "next/server"
-import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/lib/auth"
-import { prisma } from "@/lib/prisma"
-
-interface RouteParams {
-  params: {
-    id: string
-  }
-}
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { db } from '@/lib/db';
 
 export async function GET(
   request: NextRequest,
-  { params }: RouteParams
+  { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession();
     
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { id } = params
+    // Find user
+    const user = await db.user.findUnique({
+      where: { email: session.user.email },
+    });
 
-    // Verify project exists and user owns it
-    const project = await prisma.project.findFirst({
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    // Verify project ownership
+    const project = await db.project.findFirst({
       where: {
-        id,
-        userId: session.user.id,
-      }
-    })
+        id: params.id,
+        userId: user.id,
+      },
+    });
 
     if (!project) {
-      return NextResponse.json(
-        { error: "Project not found" },
-        { status: 404 }
-      )
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const history = await prisma.projectStatusHistory.findMany({
+    const history = await db.projectStatusHistory.findMany({
       where: {
-        projectId: id,
+        projectId: params.id,
       },
       include: {
         user: {
@@ -47,20 +44,20 @@ export async function GET(
             id: true,
             name: true,
             email: true,
-          }
-        }
+          },
+        },
       },
       orderBy: {
-        changedAt: 'desc'
-      }
-    })
+        changedAt: 'desc',
+      },
+    });
 
-    return NextResponse.json(history)
+    return NextResponse.json(history);
   } catch (error) {
-    console.error("Error fetching project history:", error)
+    console.error('Error fetching project history:', error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: 'Internal server error' },
       { status: 500 }
-    )
+    );
   }
 }

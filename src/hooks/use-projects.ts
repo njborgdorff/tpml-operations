@@ -1,43 +1,75 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { Project, ProjectFilter, ProjectStatus, UpdateProjectStatusRequest } from '@/types/project';
+import { useState, useEffect } from 'react';
+import { Project, ProjectStatus, ProjectFilter } from '@/lib/types';
 
-export function useProjects() {
+interface UseProjectsReturn {
+  projects: Project[];
+  loading: boolean;
+  error: string | null;
+  filter: ProjectFilter;
+  updateFilter: (filter: ProjectFilter) => void;
+  updateProjectStatus: (projectId: string, status: ProjectStatus) => Promise<void>;
+  createProject: (name: string, description?: string) => Promise<void>;
+  refetch: () => Promise<void>;
+}
+
+export function useProjects(): UseProjectsReturn {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<ProjectFilter>('active');
+  const [filter, setFilter] = useState<ProjectFilter>({ showActive: true });
 
-  const fetchProjects = useCallback(async (currentFilter: ProjectFilter = filter) => {
+  const fetchProjects = async (currentFilter: ProjectFilter = filter) => {
     try {
       setLoading(true);
       setError(null);
+
+      const params = new URLSearchParams();
       
-      const queryParams = currentFilter !== 'all' ? `?filter=${currentFilter}` : '';
-      const response = await fetch(`/api/projects${queryParams}`);
+      if (currentFilter.showActive) {
+        params.set('showActive', 'true');
+      }
+      if (currentFilter.showFinished) {
+        params.set('showFinished', 'true');
+      }
+      if (currentFilter.status) {
+        params.set('status', currentFilter.status.join(','));
+      }
+
+      const response = await fetch(`/api/projects?${params.toString()}`);
       
       if (!response.ok) {
         throw new Error('Failed to fetch projects');
       }
-      
+
       const data = await response.json();
-      setProjects(data);
+      setProjects(data.map((project: any) => ({
+        ...project,
+        createdAt: new Date(project.createdAt),
+        updatedAt: new Date(project.updatedAt),
+        archivedAt: project.archivedAt ? new Date(project.archivedAt) : undefined,
+      })));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  };
 
-  const updateProjectStatus = async (projectId: string, newStatus: ProjectStatus) => {
+  const updateFilter = (newFilter: ProjectFilter) => {
+    setFilter(newFilter);
+    fetchProjects(newFilter);
+  };
+
+  const updateProjectStatus = async (projectId: string, status: ProjectStatus) => {
     try {
       const response = await fetch(`/api/projects/${projectId}/status`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ status: newStatus } satisfies UpdateProjectStatusRequest),
+        body: JSON.stringify({ status }),
       });
 
       if (!response.ok) {
@@ -46,26 +78,27 @@ export function useProjects() {
 
       const updatedProject = await response.json();
       
-      // Update the project in the local state
-      setProjects(prev => 
-        prev.map(p => p.id === projectId ? updatedProject : p)
+      setProjects((prev) =>
+        prev.map((project) =>
+          project.id === projectId
+            ? {
+                ...updatedProject,
+                createdAt: new Date(updatedProject.createdAt),
+                updatedAt: new Date(updatedProject.updatedAt),
+                archivedAt: updatedProject.archivedAt
+                  ? new Date(updatedProject.archivedAt)
+                  : undefined,
+              }
+            : project
+        )
       );
 
-      // If the project was moved to finished and we're viewing active projects,
-      // remove it from the list
-      if (newStatus === ProjectStatus.FINISHED && filter === 'active') {
-        setProjects(prev => prev.filter(p => p.id !== projectId));
+      // If we moved to finished and we're viewing active, refetch to remove it
+      if (status === ProjectStatus.FINISHED && filter.showActive) {
+        await fetchProjects();
       }
-      
-      // If we're viewing finished projects and a project was moved out of finished,
-      // remove it from the list
-      if (newStatus !== ProjectStatus.FINISHED && filter === 'finished') {
-        setProjects(prev => prev.filter(p => p.id !== projectId));
-      }
-
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update project');
-      throw err; // Re-throw to handle in component
+      throw err;
     }
   };
 
@@ -85,30 +118,27 @@ export function useProjects() {
 
       const newProject = await response.json();
       
-      // Add to projects list if it matches current filter
-      if (filter === 'all' || filter === 'active') {
-        setProjects(prev => [newProject, ...prev]);
+      // Only add to list if it matches current filter
+      if (filter.showActive) {
+        setProjects((prev) => [
+          {
+            ...newProject,
+            createdAt: new Date(newProject.createdAt),
+            updatedAt: new Date(newProject.updatedAt),
+            archivedAt: newProject.archivedAt
+              ? new Date(newProject.archivedAt)
+              : undefined,
+          },
+          ...prev,
+        ]);
       }
-      
-      return newProject;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create project');
       throw err;
     }
   };
 
-  const changeFilter = useCallback((newFilter: ProjectFilter) => {
-    setFilter(newFilter);
-    fetchProjects(newFilter);
-  }, [fetchProjects]);
-
-  // Calculate project counts for filter display
-  const projectCounts = {
-    all: projects.length,
-    active: projects.filter(p => 
-      p.status === ProjectStatus.IN_PROGRESS || p.status === ProjectStatus.COMPLETE
-    ).length,
-    finished: projects.filter(p => p.status === ProjectStatus.FINISHED).length,
+  const refetch = async () => {
+    await fetchProjects();
   };
 
   useEffect(() => {
@@ -120,10 +150,9 @@ export function useProjects() {
     loading,
     error,
     filter,
-    projectCounts,
+    updateFilter,
     updateProjectStatus,
     createProject,
-    changeFilter,
-    refetch: fetchProjects,
+    refetch,
   };
 }

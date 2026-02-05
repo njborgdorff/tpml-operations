@@ -1,59 +1,46 @@
 'use client';
 
 import { useState } from 'react';
-import { ProjectStatus } from '@/types/project';
-import { Button } from '@/components/ui/button';
+import { ProjectStatus } from '@/lib/types';
+import { getStatusLabel } from '@/lib/utils';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface ProjectStatusSelectorProps {
   currentStatus: ProjectStatus;
   projectId: string;
-  onStatusUpdate: (projectId: string, newStatus: ProjectStatus) => Promise<void>;
+  onStatusChange: (status: ProjectStatus) => Promise<void>;
+  disabled?: boolean;
 }
 
-export function ProjectStatusSelector({ 
-  currentStatus, 
-  projectId, 
-  onStatusUpdate 
+const STATUS_OPTIONS = [
+  ProjectStatus.IN_PROGRESS,
+  ProjectStatus.COMPLETE,
+  ProjectStatus.APPROVED,
+];
+
+export function ProjectStatusSelector({
+  currentStatus,
+  projectId,
+  onStatusChange,
+  disabled = false,
 }: ProjectStatusSelectorProps) {
   const [isUpdating, setIsUpdating] = useState(false);
 
-  const getNextStatus = (current: ProjectStatus): ProjectStatus | null => {
-    switch (current) {
-      case ProjectStatus.IN_PROGRESS:
-        return ProjectStatus.COMPLETE;
-      case ProjectStatus.COMPLETE:
-        return ProjectStatus.APPROVED;
-      case ProjectStatus.APPROVED:
-        return ProjectStatus.FINISHED;
-      case ProjectStatus.FINISHED:
-        return null; // No further status
-      default:
-        return null;
-    }
-  };
-
-  const getStatusActionLabel = (current: ProjectStatus): string => {
-    switch (current) {
-      case ProjectStatus.IN_PROGRESS:
-        return "Mark Complete";
-      case ProjectStatus.COMPLETE:
-        return "Mark Approved";
-      case ProjectStatus.APPROVED:
-        return "Move to Finished";
-      case ProjectStatus.FINISHED:
-        return "Already Finished";
-      default:
-        return "Update Status";
-    }
-  };
-
-  const handleStatusUpdate = async () => {
-    const nextStatus = getNextStatus(currentStatus);
-    if (!nextStatus) return;
+  const handleStatusChange = async (value: string) => {
+    if (isUpdating) return;
+    
+    const newStatus = value as ProjectStatus;
+    if (newStatus === currentStatus) return;
 
     setIsUpdating(true);
     try {
-      await onStatusUpdate(projectId, nextStatus);
+      await onStatusChange(newStatus);
     } catch (error) {
       console.error('Failed to update status:', error);
     } finally {
@@ -61,24 +48,22 @@ export function ProjectStatusSelector({
     }
   };
 
-  const nextStatus = getNextStatus(currentStatus);
-  
-  if (!nextStatus) {
-    return (
-      <Button variant="secondary" disabled size="sm">
-        {getStatusActionLabel(currentStatus)}
-      </Button>
-    );
-  }
-
   return (
-    <Button
-      onClick={handleStatusUpdate}
-      disabled={isUpdating}
-      size="sm"
-      variant={currentStatus === ProjectStatus.APPROVED ? "destructive" : "default"}
+    <Select
+      value={currentStatus}
+      onValueChange={handleStatusChange}
+      disabled={disabled || isUpdating}
     >
-      {isUpdating ? "Updating..." : getStatusActionLabel(currentStatus)}
-    </Button>
+      <SelectTrigger className="w-32">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {STATUS_OPTIONS.map((status) => (
+          <SelectItem key={status} value={status}>
+            {getStatusLabel(status)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
