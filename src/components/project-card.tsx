@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useUpdateProjectStatus } from '@/hooks/use-projects';
 import { getStatusLabel, getNextStatus, getPreviousStatus, canMoveToFinished } from '@/lib/project-utils';
-import { MoreHorizontal, Clock, CheckCircle, Award, Archive } from 'lucide-react';
+import { MoreHorizontal, Clock, CheckCircle, Award, Archive, History } from 'lucide-react';
 
 interface ProjectCardProps {
   project: ProjectWithUser;
@@ -44,6 +44,16 @@ export function ProjectCard({ project }: ProjectCardProps) {
     }
   };
 
+  const formatDate = (date: Date) => {
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(new Date(date));
+  };
+
   return (
     <div className="border rounded-lg p-4 bg-card text-card-foreground shadow-sm hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between">
@@ -54,6 +64,10 @@ export function ProjectCard({ project }: ProjectCardProps) {
               {project.description}
             </p>
           )}
+          <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+            <span>Created: {formatDate(project.createdAt)}</span>
+            <span>Updated: {formatDate(project.updatedAt)}</span>
+          </div>
         </div>
         
         <div className="flex items-center gap-2 ml-4">
@@ -66,8 +80,8 @@ export function ProjectCard({ project }: ProjectCardProps) {
                 <span className="sr-only">Open menu</span>
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Status Actions</DropdownMenuLabel>
               <DropdownMenuSeparator />
               
               {previousStatus && (
@@ -100,7 +114,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
                   <DropdownMenuItem 
                     onClick={() => handleStatusUpdate(ProjectStatus.FINISHED)}
                     disabled={updateStatusMutation.isPending}
-                    className="text-destructive focus:text-destructive"
+                    className="text-orange-700 focus:text-orange-700 focus:bg-orange-50"
                   >
                     <div className="flex items-center gap-2">
                       <Archive className="h-4 w-4" />
@@ -109,19 +123,30 @@ export function ProjectCard({ project }: ProjectCardProps) {
                   </DropdownMenuItem>
                 </>
               )}
+              
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs">Project Info</DropdownMenuLabel>
+              <DropdownMenuItem disabled>
+                <div className="flex items-center gap-2">
+                  <History className="h-4 w-4" />
+                  Status History Available
+                </div>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
       
-      <div className="flex items-center justify-between mt-4 text-xs text-muted-foreground">
-        <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
-        <span>Updated: {new Date(project.updatedAt).toLocaleDateString()}</span>
-      </div>
+      {/* Status transition hint */}
+      {project.status !== ProjectStatus.FINISHED && (
+        <div className="mt-3 text-xs text-muted-foreground bg-gray-50 rounded px-2 py-1">
+          <span className="font-medium">Next:</span> {nextStatus ? getStatusLabel(nextStatus) : 'Complete'}
+        </div>
+      )}
       
-      {project.archivedAt && (
-        <div className="mt-2 text-xs text-muted-foreground">
-          Archived: {new Date(project.archivedAt).toLocaleDateString()}
+      {updateStatusMutation.isPending && (
+        <div className="mt-2 text-xs text-blue-600 bg-blue-50 rounded px-2 py-1">
+          Updating status...
         </div>
       )}
     </div>
