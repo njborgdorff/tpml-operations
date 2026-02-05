@@ -1,19 +1,24 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Project, ProjectStatus, CreateProjectData, UpdateProjectStatusData } from '@/lib/types';
+import { Project, ProjectStatus, ProjectFilters } from '@/lib/types';
 
 const API_BASE = '/api/projects';
 
-// Fetch projects with optional filtering
-export const useProjects = (view?: 'active' | 'finished', status?: ProjectStatus) => {
+export function useProjects(filters?: ProjectFilters) {
   const queryParams = new URLSearchParams();
-  if (view) queryParams.append('view', view);
-  if (status) queryParams.append('status', status);
   
+  if (filters?.status?.length) {
+    queryParams.set('status', filters.status.join(','));
+  }
+  
+  if (filters?.showFinished) {
+    queryParams.set('showFinished', 'true');
+  }
+
   const queryString = queryParams.toString();
   const url = queryString ? `${API_BASE}?${queryString}` : API_BASE;
 
   return useQuery<Project[]>({
-    queryKey: ['projects', view, status],
+    queryKey: ['projects', filters],
     queryFn: async () => {
       const response = await fetch(url);
       if (!response.ok) {
@@ -22,48 +27,14 @@ export const useProjects = (view?: 'active' | 'finished', status?: ProjectStatus
       return response.json();
     },
   });
-};
+}
 
-// Create a new project
-export const useCreateProject = () => {
+export function useUpdateProjectStatus() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (data: CreateProjectData): Promise<Project> => {
-      const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(data),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to create project');
-      }
-
-      return response.json();
-    },
-    onSuccess: () => {
-      // Invalidate and refetch projects
-      queryClient.invalidateQueries({ queryKey: ['projects'] });
-    },
-  });
-};
-
-// Update project status
-export const useUpdateProjectStatus = () => {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ 
-      id, 
-      status 
-    }: { 
-      id: string; 
-      status: ProjectStatus; 
-    }): Promise<Project> => {
-      const response = await fetch(`${API_BASE}/${id}/status`, {
+    mutationFn: async ({ projectId, status }: { projectId: string; status: ProjectStatus }) => {
+      const response = await fetch(`${API_BASE}/${projectId}/status`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -72,20 +43,46 @@ export const useUpdateProjectStatus = () => {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to update project status');
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to update project status');
       }
 
       return response.json();
     },
     onSuccess: () => {
-      // Invalidate and refetch projects
+      // Invalidate all project queries to refetch data
       queryClient.invalidateQueries({ queryKey: ['projects'] });
     },
   });
-};
+}
 
-// Fetch project status history
-export const useProjectHistory = (projectId: string) => {
+export function useCreateProject() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ name, description }: { name: string; description?: string }) => {
+      const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, description }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to create project');
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
+  });
+}
+
+export function useProjectHistory(projectId: string) {
   return useQuery({
     queryKey: ['project-history', projectId],
     queryFn: async () => {
@@ -97,4 +94,4 @@ export const useProjectHistory = (projectId: string) => {
     },
     enabled: !!projectId,
   });
-};
+}

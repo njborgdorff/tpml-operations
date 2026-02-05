@@ -1,83 +1,125 @@
 'use client'
 
-import React, { useState } from 'react'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { useState } from 'react'
+import { MoreHorizontal, Clock, User } from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { ProjectStatusBadge } from '@/components/ProjectStatusBadge'
-import { Project, ProjectStatus } from '@/types/project'
-import { formatDistanceToNow } from 'date-fns'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { ProjectStatusBadge } from './ProjectStatusBadge'
+import { Project, ProjectStatus } from '@/lib/types'
+import { useUpdateProjectStatus } from '@/hooks/useProjects'
+import { formatDate } from '@/lib/utils'
 
 interface ProjectCardProps {
   project: Project
-  onStatusUpdate: (projectId: string, newStatus: ProjectStatus) => void
-  currentUserId: string
 }
 
-export function ProjectCard({ project, onStatusUpdate, currentUserId }: ProjectCardProps) {
+export function ProjectCard({ project }: ProjectCardProps) {
   const [isUpdating, setIsUpdating] = useState(false)
+  const updateStatusMutation = useUpdateProjectStatus()
 
-  const handleStatusUpdate = async (newStatus: ProjectStatus) => {
-    if (project.userId !== currentUserId) return
-    
+  const handleStatusChange = async (newStatus: ProjectStatus) => {
+    if (newStatus === project.status) return
+
     setIsUpdating(true)
     try {
-      await onStatusUpdate(project.id, newStatus)
+      await updateStatusMutation.mutateAsync({
+        projectId: project.id,
+        status: newStatus
+      })
+    } catch (error) {
+      console.error('Failed to update project status:', error)
+      // You might want to show a toast notification here
     } finally {
       setIsUpdating(false)
     }
   }
 
-  const getNextStatus = () => {
-    switch (project.status) {
+  const getNextStatusOptions = (currentStatus: ProjectStatus): ProjectStatus[] => {
+    switch (currentStatus) {
       case ProjectStatus.IN_PROGRESS:
-        return { status: ProjectStatus.COMPLETE, label: 'Mark Complete' }
+        return [ProjectStatus.COMPLETE]
       case ProjectStatus.COMPLETE:
-        return { status: ProjectStatus.APPROVED, label: 'Mark Approved' }
+        return [ProjectStatus.APPROVED, ProjectStatus.IN_PROGRESS]
       case ProjectStatus.APPROVED:
-        return { status: ProjectStatus.FINISHED, label: 'Move to Finished' }
+        return [ProjectStatus.FINISHED, ProjectStatus.COMPLETE]
+      case ProjectStatus.FINISHED:
+        return [] // Finished projects cannot be changed
       default:
-        return null
+        return []
     }
   }
 
-  const nextAction = getNextStatus()
-  const isOwner = project.userId === currentUserId
-  const canUpdate = isOwner && nextAction && project.status !== ProjectStatus.FINISHED
+  const nextStatusOptions = getNextStatusOptions(project.status)
 
   return (
     <Card className="w-full">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg">{project.name}</CardTitle>
-          <ProjectStatusBadge status={project.status} />
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between">
+          <div className="space-y-2">
+            <CardTitle className="text-lg">{project.name}</CardTitle>
+            <ProjectStatusBadge status={project.status} />
+          </div>
+          <div className="flex items-center gap-2">
+            {nextStatusOptions.length > 0 && (
+              <Select
+                value={project.status}
+                onValueChange={(value) => handleStatusChange(value as ProjectStatus)}
+                disabled={isUpdating}
+              >
+                <SelectTrigger className="w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={project.status}>
+                    {project.status.replace('_', ' ')}
+                  </SelectItem>
+                  {nextStatusOptions.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {status.replace('_', ' ')}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
         </div>
         {project.description && (
-          <CardDescription>{project.description}</CardDescription>
+          <CardDescription className="mt-2">
+            {project.description}
+          </CardDescription>
         )}
       </CardHeader>
+      
       <CardContent>
-        <div className="text-sm text-muted-foreground space-y-1">
-          <div>Created {formatDistanceToNow(new Date(project.createdAt))} ago</div>
-          <div>Last updated {formatDistanceToNow(new Date(project.updatedAt))} ago</div>
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-1">
+              <User className="h-3 w-3" />
+              {project.user?.name || project.user?.email || 'Unknown User'}
+            </div>
+            <div className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {formatDate(project.updatedAt)}
+            </div>
+          </div>
+          
           {project.archivedAt && (
-            <div>Archived {formatDistanceToNow(new Date(project.archivedAt))} ago</div>
-          )}
-          {project.user && (
-            <div>Owner: {project.user.name || project.user.email}</div>
+            <div className="text-xs">
+              Archived: {formatDate(project.archivedAt)}
+            </div>
           )}
         </div>
+
+        {project.statusHistory && project.statusHistory.length > 0 && (
+          <div className="mt-3 pt-3 border-t">
+            <div className="text-xs text-muted-foreground">
+              Last updated: {formatDate(project.statusHistory[0].changedAt)} by{' '}
+              {project.statusHistory[0].user?.name || project.statusHistory[0].user?.email}
+            </div>
+          </div>
+        )}
       </CardContent>
-      {canUpdate && (
-        <CardFooter>
-          <Button 
-            onClick={() => handleStatusUpdate(nextAction.status)}
-            disabled={isUpdating}
-            className="w-full"
-          >
-            {isUpdating ? 'Updating...' : nextAction.label}
-          </Button>
-        </CardFooter>
-      )}
     </Card>
   )
 }

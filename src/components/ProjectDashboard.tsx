@@ -1,149 +1,120 @@
-"use client"
+'use client'
 
-import { useState, useEffect } from "react"
-import { ProjectCard } from "./ProjectCard"
-import { CreateProjectDialog } from "./CreateProjectDialog"
-import { Button } from "./ui/button"
-
-interface Project {
-  id: string
-  name: string
-  description: string | null
-  status: string
-  createdAt: string
-  updatedAt: string
-  archivedAt: string | null
-  user: {
-    id: string
-    name: string | null
-    email: string
-  }
-}
-
-type FilterType = 'active' | 'finished' | 'all'
+import { useState } from 'react'
+import { Plus, Loader2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { ProjectCard } from './ProjectCard'
+import { ProjectFilters } from './ProjectFilters'
+import { useProjects } from '@/hooks/useProjects'
+import { ProjectFilters as ProjectFiltersType, ProjectStatus } from '@/lib/types'
 
 export function ProjectDashboard() {
-  const [projects, setProjects] = useState<Project[]>([])
-  const [filter, setFilter] = useState<FilterType>('active')
-  const [isLoading, setIsLoading] = useState(true)
+  const [filters, setFilters] = useState<ProjectFiltersType>({
+    status: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE],
+    showFinished: false
+  })
 
-  const fetchProjects = async () => {
-    try {
-      setIsLoading(true)
-      const queryParam = filter !== 'all' ? `?status=${filter}` : ''
-      const response = await fetch(`/api/projects${queryParam}`)
-      
-      if (response.ok) {
-        const data = await response.json()
-        setProjects(data)
-      } else {
-        console.error('Failed to fetch projects')
+  const { data: projects, isLoading, error } = useProjects(filters)
+
+  const getEmptyStateMessage = () => {
+    if (filters.showFinished && filters.status?.includes(ProjectStatus.FINISHED)) {
+      return "No finished projects found."
+    }
+    if (filters.status?.length === 1) {
+      const status = filters.status[0]
+      switch (status) {
+        case ProjectStatus.IN_PROGRESS:
+          return "No projects in progress."
+        case ProjectStatus.COMPLETE:
+          return "No completed projects."
+        case ProjectStatus.APPROVED:
+          return "No approved projects."
+        default:
+          return "No projects found with this status."
       }
-    } catch (error) {
-      console.error('Error fetching projects:', error)
-    } finally {
-      setIsLoading(false)
     }
+    return "No active projects found."
   }
 
-  useEffect(() => {
-    fetchProjects()
-  }, [filter])
-
-  const handleStatusChange = async (projectId: string, newStatus: string) => {
-    try {
-      const response = await fetch(`/api/projects/${projectId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status: newStatus }),
-      })
-
-      if (response.ok) {
-        // Refresh projects to reflect the change
-        fetchProjects()
-      } else {
-        console.error('Failed to update project status')
-      }
-    } catch (error) {
-      console.error('Error updating project status:', error)
+  const getPageTitle = () => {
+    if (filters.showFinished && filters.status?.includes(ProjectStatus.FINISHED)) {
+      return "Finished Projects"
     }
+    return "Project Dashboard"
   }
 
-  const handleProjectCreated = () => {
-    fetchProjects()
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <p className="text-lg text-muted-foreground">Failed to load projects</p>
+          <p className="text-sm text-muted-foreground mt-2">
+            Please try refreshing the page
+          </p>
+        </div>
+      </div>
+    )
   }
-
-  const getFilterCounts = () => {
-    // We need to fetch all projects to get accurate counts
-    // For now, we'll show the current filtered count
-    return {
-      active: filter === 'active' ? projects.length : '?',
-      finished: filter === 'finished' ? projects.length : '?',
-      all: filter === 'all' ? projects.length : '?'
-    }
-  }
-
-  const counts = getFilterCounts()
 
   return (
-    <div className="container mx-auto py-8">
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-3xl font-bold">Project Dashboard</h1>
-        <CreateProjectDialog onProjectCreated={handleProjectCreated} />
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">{getPageTitle()}</h1>
+          <p className="text-muted-foreground mt-1">
+            Manage and track your project lifecycle
+          </p>
+        </div>
+        {!filters.showFinished && (
+          <Button>
+            <Plus className="h-4 w-4 mr-2" />
+            New Project
+          </Button>
+        )}
       </div>
 
-      {/* Filter Buttons */}
-      <div className="flex space-x-2 mb-6">
-        <Button
-          variant={filter === 'active' ? 'default' : 'outline'}
-          onClick={() => setFilter('active')}
-        >
-          Active Projects ({counts.active})
-        </Button>
-        <Button
-          variant={filter === 'finished' ? 'default' : 'outline'}
-          onClick={() => setFilter('finished')}
-        >
-          Finished Projects ({counts.finished})
-        </Button>
-        <Button
-          variant={filter === 'all' ? 'default' : 'outline'}
-          onClick={() => setFilter('all')}
-        >
-          All Projects ({counts.all})
-        </Button>
-      </div>
+      {/* Filters */}
+      <ProjectFilters filters={filters} onFiltersChange={setFilters} />
+
+      {/* Project Count */}
+      {!isLoading && projects && (
+        <div className="text-sm text-muted-foreground">
+          {projects.length} {projects.length === 1 ? 'project' : 'projects'} found
+        </div>
+      )}
+
+      {/* Loading State */}
+      {isLoading && (
+        <div className="flex items-center justify-center min-h-[200px]">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span>Loading projects...</span>
+          </div>
+        </div>
+      )}
 
       {/* Projects Grid */}
-      {isLoading ? (
-        <div className="text-center py-8">Loading projects...</div>
-      ) : projects.length === 0 ? (
-        <div className="text-center py-8">
-          <h2 className="text-xl font-semibold mb-2">
-            {filter === 'active' && 'No active projects'}
-            {filter === 'finished' && 'No finished projects'}
-            {filter === 'all' && 'No projects found'}
-          </h2>
-          <p className="text-gray-600 mb-4">
-            {filter === 'active' && 'Create a new project to get started.'}
-            {filter === 'finished' && 'Projects marked as finished will appear here.'}
-            {filter === 'all' && 'Create a new project to get started.'}
-          </p>
-          {filter !== 'finished' && (
-            <CreateProjectDialog onProjectCreated={handleProjectCreated} />
-          )}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {!isLoading && projects && projects.length > 0 && (
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {projects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              onStatusChange={handleStatusChange}
-            />
+            <ProjectCard key={project.id} project={project} />
           ))}
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!isLoading && projects && projects.length === 0 && (
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <p className="text-lg text-muted-foreground">{getEmptyStateMessage()}</p>
+            {!filters.showFinished && (
+              <Button className="mt-4">
+                <Plus className="h-4 w-4 mr-2" />
+                Create Your First Project
+              </Button>
+            )}
+          </div>
         </div>
       )}
     </div>
