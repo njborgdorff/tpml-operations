@@ -1,9 +1,6 @@
 -- CreateEnum
 CREATE TYPE "ProjectStatus" AS ENUM ('IN_PROGRESS', 'COMPLETE', 'APPROVED', 'FINISHED');
 
--- CreateEnum
-CREATE TYPE "UserRole" AS ENUM ('ADMIN', 'MANAGER', 'MEMBER');
-
 -- CreateTable
 CREATE TABLE "Account" (
     "id" TEXT NOT NULL,
@@ -37,10 +34,9 @@ CREATE TABLE "User" (
     "id" TEXT NOT NULL,
     "name" TEXT,
     "email" TEXT NOT NULL,
-    "password" TEXT,
     "emailVerified" TIMESTAMP(3),
     "image" TEXT,
-    "role" "UserRole" NOT NULL DEFAULT 'MEMBER',
+    "role" TEXT NOT NULL DEFAULT 'USER',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -96,13 +92,19 @@ CREATE UNIQUE INDEX "VerificationToken_token_key" ON "VerificationToken"("token"
 CREATE UNIQUE INDEX "VerificationToken_identifier_token_key" ON "VerificationToken"("identifier", "token");
 
 -- CreateIndex
-CREATE INDEX "Project_status_idx" ON "Project"("status");
-
--- CreateIndex
 CREATE INDEX "Project_userId_idx" ON "Project"("userId");
 
 -- CreateIndex
+CREATE INDEX "Project_status_idx" ON "Project"("status");
+
+-- CreateIndex
+CREATE INDEX "Project_createdAt_idx" ON "Project"("createdAt");
+
+-- CreateIndex
 CREATE INDEX "ProjectStatusHistory_projectId_idx" ON "ProjectStatusHistory"("projectId");
+
+-- CreateIndex
+CREATE INDEX "ProjectStatusHistory_changedAt_idx" ON "ProjectStatusHistory"("changedAt");
 
 -- AddForeignKey
 ALTER TABLE "Account" ADD CONSTRAINT "Account_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -117,4 +119,4 @@ ALTER TABLE "Project" ADD CONSTRAINT "Project_userId_fkey" FOREIGN KEY ("userId"
 ALTER TABLE "ProjectStatusHistory" ADD CONSTRAINT "ProjectStatusHistory_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ProjectStatusHistory" ADD CONSTRAINT "ProjectStatusHistory_changedBy_fkey" FOREIGN KEY ("changedBy") REFERENCES "User"("id") ON UPDATE CASCADE;
+ALTER TABLE "ProjectStatusHistory" ADD CONSTRAINT "ProjectStatusHistory_changedBy_fkey" FOREIGN KEY ("changedBy") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

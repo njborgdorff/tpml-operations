@@ -1,46 +1,29 @@
-import { type ClassValue, clsx } from "clsx";
-import { twMerge } from "tailwind-merge";
-import { ProjectStatus } from "./types";
+import { type ClassValue, clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
 
 export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
+  return twMerge(clsx(inputs))
 }
 
-export function getStatusColor(status: ProjectStatus): string {
-  switch (status) {
-    case ProjectStatus.IN_PROGRESS:
-      return "bg-blue-100 text-blue-800 border-blue-200";
-    case ProjectStatus.COMPLETE:
-      return "bg-orange-100 text-orange-800 border-orange-200";
-    case ProjectStatus.APPROVED:
-      return "bg-green-100 text-green-800 border-green-200";
-    case ProjectStatus.FINISHED:
-      return "bg-gray-100 text-gray-800 border-gray-200";
-    default:
-      return "bg-gray-100 text-gray-800 border-gray-200";
-  }
-}
-
-export function getStatusLabel(status: ProjectStatus): string {
-  switch (status) {
-    case ProjectStatus.IN_PROGRESS:
-      return "In Progress";
-    case ProjectStatus.COMPLETE:
-      return "Complete";
-    case ProjectStatus.APPROVED:
-      return "Approved";
-    case ProjectStatus.FINISHED:
-      return "Finished";
-    default:
-      return "Unknown";
-  }
-}
-
-export function formatDate(date: Date | string): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  return d.toLocaleDateString('en-US', {
+export function formatDate(date: Date | string) {
+  return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
-  });
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(new Date(date))
+}
+
+export function formatRelativeTime(date: Date | string) {
+  const now = new Date()
+  const target = new Date(date)
+  const diffInSeconds = Math.floor((now.getTime() - target.getTime()) / 1000)
+  
+  if (diffInSeconds < 60) return 'just now'
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`
+  if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)} days ago`
+  
+  return formatDate(date)
 }
