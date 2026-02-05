@@ -7,13 +7,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { Inngest } from 'inngest';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/db/prisma';
 
 // Initialize Inngest client
 const inngest = new Inngest({ id: 'tpml-code-team' });
-
-// Initialize Prisma client
-const prisma = new PrismaClient();
 
 // ============================================================================
 // Types
