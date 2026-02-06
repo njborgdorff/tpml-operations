@@ -8,5 +8,5 @@ export type {
 } from './project'
 
 // Re-export intake types and schemas
-export { IntakeSchema, ProjectTypeEnum } from './intake'
-export type { IntakeData, NewProjectData, NewFeatureData, BugFixData, ProjectType } from './intake'
+export { IntakeSchema, ProjectTypeEnum, ReferenceDocumentSchema } from './intake'
+export type { IntakeData, NewProjectData, NewFeatureData, BugFixData, ProjectType, ReferenceDocument } from './intake'

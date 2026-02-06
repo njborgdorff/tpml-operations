@@ -4,13 +4,14 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { IntakeSchema, IntakeData, ProjectType } from '@/types';
+import { IntakeSchema, IntakeData, ProjectType, ReferenceDocument } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { FileDropzone, UploadedFile } from '@/components/ui/file-dropzone';
 import { toast } from 'sonner';
 
 interface Client {
@@ -40,6 +41,7 @@ export function IntakeForm({ clients }: IntakeFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [codebases, setCodebases] = useState<Codebase[]>([]);
   const [projectType, setProjectType] = useState<ProjectType>('NEW_PROJECT');
+  const [referenceDocuments, setReferenceDocuments] = useState<UploadedFile[]>([]);
 
   // Fetch available codebases on mount
   useEffect(() => {
@@ -82,10 +84,21 @@ export function IntakeForm({ clients }: IntakeFormProps) {
   const onSubmit = async (data: IntakeData) => {
     setIsSubmitting(true);
     try {
+      // Convert uploaded files to reference documents format
+      const docs: ReferenceDocument[] = referenceDocuments.map(f => ({
+        name: f.name,
+        type: f.type,
+        size: f.size,
+        content: f.content,
+      }));
+
       const response = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify({
+          ...data,
+          referenceDocuments: docs.length > 0 ? docs : undefined,
+        }),
       });
 
       if (!response.ok) {
@@ -480,6 +493,31 @@ export function IntakeForm({ clients }: IntakeFormProps) {
           </Card>
         </>
       )}
+
+      {/* Reference Documents - All project types */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Reference Documents (Optional)</CardTitle>
+          <CardDescription>
+            {projectType === 'BUG_FIX'
+              ? 'Upload screenshots, error logs, or related documentation'
+              : projectType === 'NEW_FEATURE'
+              ? 'Upload specs, mockups, or related documentation'
+              : 'Upload specs, wireframes, design documents, or any reference material'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <FileDropzone
+            files={referenceDocuments}
+            onFilesChange={setReferenceDocuments}
+            maxFiles={10}
+            maxSizeBytes={5 * 1024 * 1024}
+          />
+          <p className="text-sm text-muted-foreground mt-2">
+            These documents will be provided to the AI team for context during planning and implementation.
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Submit */}
       <div className="flex justify-end">
