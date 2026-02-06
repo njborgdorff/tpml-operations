@@ -71,14 +71,12 @@ export default async function ProjectPage({ params }: PageProps) {
   }
 
   return (
-    <div className="container mx-auto py-8 px-4 max-w-4xl">
+    <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
-      <div className="mb-8">
-        <Link href="/">
-          <Button variant="ghost" size="sm" className="mb-4">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Dashboard
-          </Button>
+      <div>
+        <Link href="/projects" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-4">
+          <ArrowLeft className="h-4 w-4 mr-1" />
+          Back to Projects
         </Link>
 
         <div className="flex items-start justify-between">

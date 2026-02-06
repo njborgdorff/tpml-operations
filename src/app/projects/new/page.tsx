@@ -19,25 +19,19 @@ export default async function NewProjectPage() {
   });
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <Link href="/" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            Back to Projects
-          </Link>
-        </div>
-      </header>
-      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold">Create New Project</h1>
-          <p className="text-muted-foreground mt-2">
-            Answer a few business questions. The AI team will handle the technical planning.
-          </p>
-        </div>
+    <div className="max-w-3xl mx-auto space-y-6">
+      <Link href="/projects" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="h-4 w-4 mr-1" />
+        Back to Projects
+      </Link>
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Create New Project</h1>
+        <p className="text-muted-foreground mt-2">
+          Answer a few business questions. The AI team will handle the technical planning.
+        </p>
+      </div>
 
-        <IntakeForm clients={clients} />
-      </main>
+      <IntakeForm clients={clients} />
     </div>
   );
 }
