@@ -43,7 +43,7 @@ export default function LoginPage() {
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="text-center">
-        <CardTitle className="text-2xl">TPML Operations</CardTitle>
+        <CardTitle className="text-2xl">TPML</CardTitle>
         <CardDescription>
           Sign in to manage your AI-staffed organization
         </CardDescription>

@@ -8,8 +8,8 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Finished Project Management',
-  description: 'A simple project archiving system for managing completed projects',
+  title: 'TPML',
+  description: 'Smarter Systems. Leaner Operations. Scalable Results.',
 }
 
 export default function RootLayout({
@@ -26,7 +26,7 @@ export default function RootLayout({
               <nav className="flex items-center justify-between">
                 <div className="flex items-center space-x-6">
                   <Link href="/projects" className="font-semibold text-xl hover:text-foreground transition-colors">
-                    TPML Operations
+                    TPML
                   </Link>
                   <NavLinks />
                 </div>
