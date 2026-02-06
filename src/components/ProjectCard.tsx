@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import Link from 'next/link'
 import {
   Card,
   CardContent,
@@ -109,7 +110,11 @@ export function ProjectCard({ project, onStatusUpdate, isUpdating: externalUpdat
       <CardHeader>
         <div className="flex items-start justify-between">
           <div className="space-y-1">
-            <CardTitle className="text-lg">{project.name}</CardTitle>
+            <CardTitle className="text-lg">
+              <Link href={`/projects/${project.slug}`} className="hover:underline">
+                {project.name}
+              </Link>
+            </CardTitle>
             <p className="text-sm text-muted-foreground">
               {project.description || 'No description provided'}
             </p>

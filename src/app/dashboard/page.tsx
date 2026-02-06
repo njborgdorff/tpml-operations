@@ -1,12 +1,14 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { ProjectCard } from '@/components/ProjectCard'
 import { ProjectFilter } from '@/components/ProjectFilter'
 import { useProjects, FilterType } from '@/hooks/useProjects'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ProjectStatus } from '@prisma/client'
+import { Plus } from 'lucide-react'
 
 export default function DashboardPage() {
   const [filter, setFilter] = useState<FilterType>('ACTIVE')
@@ -79,6 +81,12 @@ export default function DashboardPage() {
           <Button onClick={refetch} variant="outline">
             Refresh
           </Button>
+          <Link href="/projects/new">
+            <Button>
+              <Plus className="h-4 w-4 mr-2" />
+              New Project
+            </Button>
+          </Link>
         </div>
       </div>
 
