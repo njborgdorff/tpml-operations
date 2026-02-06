@@ -136,12 +136,6 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
     setTimeout(() => setCopiedCommand(false), 2000);
   };
 
-  const openClaudeCLI = () => {
-    // Use the tpml:// protocol handler to open Claude CLI
-    window.location.href = `tpml://open/${project.slug}`;
-    toast.success('Opening Claude CLI...');
-  };
-
   const handleSprintUpdate = async (sprintId: string, status: string) => {
     setIsUpdating(true);
     try {
@@ -538,37 +532,24 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Button
-              onClick={openClaudeCLI}
-              size="lg"
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              <ExternalLink className="h-4 w-4 mr-2" />
-              Open Claude CLI
-            </Button>
             <p className="text-sm text-muted-foreground">
-              The handoff document has been created. Claude will read it automatically when you start.
+              The handoff document has been created. Copy the command below and paste it into your terminal.
             </p>
-            <details className="text-sm">
-              <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                Or copy command manually
-              </summary>
-              <div className="mt-2 bg-gray-900 text-gray-100 p-3 rounded-lg font-mono text-sm flex items-center justify-between">
-                <code>{kickoffResult.cliCommand}</code>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-gray-400 hover:text-white"
-                  onClick={() => copyCommand(kickoffResult.cliCommand)}
-                >
-                  {copiedCommand ? (
-                    <Check className="h-4 w-4" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
-            </details>
+            <div className="bg-gray-900 text-gray-100 p-3 rounded-lg font-mono text-sm flex items-center justify-between">
+              <code>{kickoffResult.cliCommand}</code>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-gray-400 hover:text-white"
+                onClick={() => copyCommand(kickoffResult.cliCommand)}
+              >
+                {copiedCommand ? (
+                  <Check className="h-4 w-4" />
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -597,14 +578,22 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
               </p>
             )}
 
-            {/* Open CLI Button */}
-            <Button
-              onClick={openClaudeCLI}
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              <ExternalLink className="h-4 w-4 mr-2" />
-              Open Claude CLI
-            </Button>
+            {/* Copy CLI Command */}
+            <div className="bg-gray-900 text-gray-100 p-3 rounded-lg font-mono text-sm flex items-center justify-between">
+              <code>{cliCommand}</code>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-gray-400 hover:text-white"
+                onClick={() => copyCommand(cliCommand)}
+              >
+                {copiedCommand ? (
+                  <Check className="h-4 w-4" />
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
 
             <div className="flex gap-2 pt-2">
               <Button
