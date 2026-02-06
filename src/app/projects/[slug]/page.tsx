@@ -7,6 +7,7 @@ import { SprintManager } from '@/components/features/sprint-manager';
 import { GeneratePlanButton } from '@/components/features/generate-plan-button';
 import { DeleteProjectButton } from '@/components/features/delete-project-button';
 import { ReinitiateButton } from '@/components/features/reinitiate-button';
+import { ReinitiateSprintButton } from '@/components/features/reinitiate-sprint-button';
 import { ResetProjectButton } from '@/components/features/reset-project-button';
 import { ArchiveProjectButton } from '@/components/features/archive-project-button';
 import { RestoreProjectButton } from '@/components/features/restore-project-button';
@@ -222,23 +223,33 @@ export default async function ProjectPage({ params }: PageProps) {
       )}
 
       {/* Reinitiate Workflow for stalled projects */}
-      {(project.status === 'IN_PROGRESS' || project.status === 'ACTIVE') && (
-        <Card className="mt-6 border-orange-200 bg-orange-50">
-          <CardHeader>
-            <CardTitle>Workflow Not Started?</CardTitle>
-            <CardDescription>
-              If the AI team workflow didn&apos;t start after kickoff, you can reinitiate it here.
-              This will re-send the kickoff event without resetting any project data.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ReinitiateButton
-              projectId={project.id}
-              projectName={project.name}
-            />
-          </CardContent>
-        </Card>
-      )}
+      {(project.status === 'IN_PROGRESS' || project.status === 'ACTIVE') && (() => {
+        const activeSprint = project.sprints.find(s => s.status === 'IN_PROGRESS');
+        return (
+          <Card className="mt-6 border-orange-200 bg-orange-50">
+            <CardHeader>
+              <CardTitle>Workflow Not Started?</CardTitle>
+              <CardDescription>
+                If the AI team workflow didn&apos;t start or stalled, you can reinitiate it here.
+                This will re-send the workflow event without resetting any project data.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex gap-3">
+              <ReinitiateButton
+                projectId={project.id}
+                projectName={project.name}
+              />
+              {activeSprint && (
+                <ReinitiateSprintButton
+                  sprintId={activeSprint.id}
+                  sprintNumber={activeSprint.number}
+                  projectName={project.name}
+                />
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* Testing Tools */}
       <Card className="mt-6 border-amber-200 bg-amber-50">
