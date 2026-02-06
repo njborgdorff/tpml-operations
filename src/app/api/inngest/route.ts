@@ -4178,6 +4178,433 @@ Be specific and detailed. This output will be reviewed by the Reviewer role.`;
   }
 );
 
+// ============================================================================
+// Continue Workflow Handler (post-manual-CLI)
+// ============================================================================
+
+/**
+ * Handle workflow continuation after manual CLI implementation.
+ *
+ * Skips the implementation phase entirely and runs:
+ *   Code Review → QA Testing → Sprint Completion
+ *
+ * Triggered by: POST /api/projects/[id]/continue-workflow
+ */
+const handleWorkflowContinue = inngest.createFunction(
+  {
+    id: 'workflow-continue-handler',
+    name: 'Continue Workflow (Post-CLI)',
+  },
+  { event: 'workflow/continue' },
+  async ({ event, step }) => {
+    const {
+      projectId,
+      projectSlug,
+      projectName,
+      clientName,
+      sprintNumber,
+      sprintName,
+      handoffContent,
+      channel: eventChannel,
+    } = event.data;
+
+    const channel = eventChannel || process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+
+    console.log(`[ContinueWorkflow] Starting review/QA for ${projectName}, Sprint ${sprintNumber}`);
+
+    // Step 1: Announce workflow continuation
+    const announceResult = await step.run('announce-continuation', async () => {
+      return postAsRole('PM', channel, `Workflow continuing for ${projectName}`, [
+        {
+          type: 'header',
+          text: { type: 'plain_text', text: '🔄 Workflow Re-engaged', emoji: true },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName})\n\nManual implementation is done. Starting automated Code Review → QA → Sprint Completion.`,
+          },
+        },
+      ]);
+    });
+
+    const threadTs = announceResult?.ts;
+
+    // Step 2: Code Review
+    const reviewerResponse = await step.run('invoke-reviewer', async () => {
+      const reviewContext = `## Project: ${projectName}
+## Sprint ${sprintNumber}: ${sprintName}
+## Client: ${clientName}
+
+---
+
+## Sprint Requirements (from Handoff Document)
+
+${handoffContent ? handoffContent.substring(0, 3000) : 'Handoff document not available'}
+
+---
+
+## Implementation Context
+
+Implementation was completed manually via Claude CLI. The code changes are already committed to the repository.
+
+---
+
+## Your Review Task
+
+Review the implementation against the sprint requirements above. Since implementation was done via CLI, focus on:
+- Whether all sprint deliverables from the handoff are addressed
+- Code quality and patterns follow TPML standards
+- Security considerations are properly handled
+- Error handling is comprehensive
+
+You MUST make a clear decision:
+- If implementation meets ALL requirements: State "APPROVED" clearly and explain why
+- If issues found: State "CHANGES REQUESTED" and list specific issues with references to requirements`;
+
+      return generateRoleResponse(
+        'Reviewer',
+        `Review Sprint ${sprintNumber} implementation for "${projectName}".
+
+The sprint requirements are provided in the context above. The implementation was completed manually via CLI and is already committed.
+
+Make a CLEAR DECISION: Either APPROVE to proceed to QA, or REQUEST CHANGES with specific issues listed.`,
+        channel,
+        threadTs,
+        reviewContext,
+        { skipKnowledge: true, skipThreadHistory: true }
+      );
+    });
+
+    // Step 3: Post Reviewer's response
+    await step.run('post-reviewer-response', async () => {
+      return postAsRole('Reviewer', channel, reviewerResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: reviewerResponse.response },
+        },
+      ], threadTs);
+    });
+
+    // Step 4: Analyze Reviewer's decision
+    const reviewDecision = await step.run('analyze-review-decision', async () => {
+      return analyzeRoleDecision('Reviewer', reviewerResponse.response);
+    });
+
+    if (!reviewDecision.approved) {
+      // Reviewer requested changes — post feedback and leave sprint as IN_PROGRESS
+      await step.run('reviewer-requests-changes', async () => {
+        return postAsRole('Reviewer', channel, 'Changes requested', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `⚠️ *Changes Requested*\n\n${reviewDecision.issues || 'Please address the issues mentioned above.'}\n\nSprint stays IN_PROGRESS. Fix the issues and click "Continue Workflow" again.`,
+            },
+          },
+        ], threadTs);
+      });
+
+      // Store review summary on sprint
+      await step.run('store-review-feedback', async () => {
+        const sprint = await prisma.sprint.findFirst({
+          where: { projectId, number: sprintNumber },
+        });
+        if (sprint) {
+          await prisma.sprint.update({
+            where: { id: sprint.id },
+            data: { reviewSummary: `Code Review (Changes Requested):\n${reviewDecision.issues || reviewerResponse.response.substring(0, 500)}` },
+          });
+        }
+      });
+
+      return {
+        success: false,
+        projectId,
+        projectName,
+        stage: 'review',
+        decision: 'changes_requested',
+        issues: reviewDecision.issues,
+      };
+    }
+
+    // Reviewer approved — proceed to QA
+    await step.run('reviewer-approves', async () => {
+      return postAsRole('Reviewer', channel, 'Review approved, handing off to QA', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `✅ *Code Review Approved*\n\nImplementation meets standards. Handing off to QA for testing.`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Workflow: REVIEWING → TESTING_` },
+          ],
+        },
+      ], threadTs);
+    });
+
+    // Step 5: QA Testing
+    const qaResponse = await step.run('invoke-qa', async () => {
+      const qaContext = `## Project: ${projectName}
+## Sprint ${sprintNumber}: ${sprintName}
+## Client: ${clientName}
+
+---
+
+## Sprint Requirements & Acceptance Criteria (from Handoff Document)
+
+${handoffContent ? handoffContent.substring(0, 2500) : 'Handoff document not available'}
+
+---
+
+## Code Review Summary
+
+${reviewerResponse.response}
+
+---
+
+## Your QA Task
+
+Test the implementation against the acceptance criteria from the sprint requirements above. Verify:
+- All sprint deliverables are implemented and working
+- Features work as specified in the handoff
+- Edge cases and error conditions are handled
+- No regressions introduced
+- Performance is acceptable
+
+You MUST make a clear decision:
+- If all acceptance criteria pass: State "PASSED" or "QA APPROVED" clearly
+- If bugs found: State "BUGS FOUND" or "FAILED" and list specific issues with references to requirements`;
+
+      return generateRoleResponse(
+        'QA',
+        `Sprint ${sprintNumber} for "${projectName}" has passed code review. Test the implementation against the acceptance criteria.
+
+The sprint requirements are provided in the context above. Verify each acceptance criterion is met.
+
+Make a CLEAR DECISION: Either PASS the tests, or document BUGS FOUND with specific issues.`,
+        channel,
+        threadTs,
+        qaContext,
+        { skipKnowledge: true, skipThreadHistory: true }
+      );
+    });
+
+    // Step 6: Post QA's response
+    await step.run('post-qa-response', async () => {
+      return postAsRole('QA', channel, qaResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: qaResponse.response },
+        },
+      ], threadTs);
+    });
+
+    // Step 7: Analyze QA's decision
+    const qaDecision = await step.run('analyze-qa-decision', async () => {
+      return analyzeRoleDecision('QA', qaResponse.response);
+    });
+
+    if (!qaDecision.approved) {
+      // QA found bugs — post feedback and leave sprint as IN_PROGRESS
+      await step.run('qa-finds-bugs', async () => {
+        return postAsRole('QA', channel, 'Bugs found', [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `🐛 *Bugs Found*\n\n${qaDecision.issues || 'Please address the issues mentioned above.'}\n\nSprint stays IN_PROGRESS. Fix the issues and click "Continue Workflow" again.`,
+            },
+          },
+        ], threadTs);
+      });
+
+      // Store QA summary on sprint
+      await step.run('store-qa-feedback', async () => {
+        const sprint = await prisma.sprint.findFirst({
+          where: { projectId, number: sprintNumber },
+        });
+        if (sprint) {
+          await prisma.sprint.update({
+            where: { id: sprint.id },
+            data: { reviewSummary: `QA Testing (Bugs Found):\n${qaDecision.issues || qaResponse.response.substring(0, 500)}` },
+          });
+        }
+      });
+
+      return {
+        success: false,
+        projectId,
+        projectName,
+        stage: 'qa',
+        decision: 'bugs_found',
+        issues: qaDecision.issues,
+      };
+    }
+
+    // QA passed — proceed to sprint completion
+    await step.run('qa-passes', async () => {
+      return postAsRole('QA', channel, 'QA passed', [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `✅ *QA Testing Passed*\n\nAll acceptance criteria met. Completing sprint.`,
+          },
+        },
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Workflow: TESTING → COMPLETING_` },
+          ],
+        },
+      ], threadTs);
+    });
+
+    // Step 8: Complete sprint and set up next
+    const nextSprintInfo = await step.run('complete-sprint-setup-next', async () => {
+      // Mark current sprint as COMPLETED
+      const currentSprint = await prisma.sprint.findFirst({
+        where: { projectId, number: sprintNumber },
+      });
+
+      if (currentSprint) {
+        await prisma.sprint.update({
+          where: { id: currentSprint.id },
+          data: {
+            status: 'COMPLETED',
+            completedAt: new Date(),
+            reviewSummary: `Code Review: Approved\nQA Testing: Passed\n\nReview Summary:\n${reviewerResponse.response.substring(0, 300)}\n\nQA Summary:\n${qaResponse.response.substring(0, 300)}`,
+          },
+        });
+      }
+
+      // Find next sprint and set to AWAITING_APPROVAL
+      const nextSprint = await prisma.sprint.findFirst({
+        where: { projectId, number: sprintNumber + 1 },
+      });
+
+      if (nextSprint) {
+        await prisma.sprint.update({
+          where: { id: nextSprint.id },
+          data: { status: 'AWAITING_APPROVAL' },
+        });
+
+        return {
+          hasNext: true,
+          nextSprintId: nextSprint.id,
+          nextSprintNumber: nextSprint.number,
+          nextSprintName: nextSprint.name,
+          nextSprintGoal: nextSprint.goal,
+        };
+      }
+
+      // No more sprints — mark project complete
+      await prisma.project.update({
+        where: { id: projectId },
+        data: { status: 'COMPLETED' },
+      });
+
+      return { hasNext: false };
+    });
+
+    // Step 9: Announce completion
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    await step.run('announce-sprint-complete', async () => {
+      if (nextSprintInfo.hasNext && 'nextSprintId' in nextSprintInfo) {
+        const { nextSprintNumber, nextSprintName: nextName, nextSprintGoal } = nextSprintInfo;
+        return postAsRole('PM', channel, 'Sprint complete - next sprint ready', [
+          {
+            type: 'header',
+            text: { type: 'plain_text', text: '✅ Sprint Complete!', emoji: true },
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*${projectName}* - Sprint ${sprintNumber} (${sprintName}) is complete!\n\n✅ Code Review passed\n✅ QA Testing passed`,
+            },
+          },
+          {
+            type: 'divider',
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `🎯 *Next Up:* Sprint ${nextSprintNumber} - ${nextName || 'Upcoming Sprint'}\n${nextSprintGoal ? `*Goal:* ${nextSprintGoal}` : ''}\n\n⏳ *Human approval required to start Sprint ${nextSprintNumber}*`,
+            },
+          },
+          {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '📄 View Project', emoji: true },
+                url: `${baseUrl}/projects/${projectSlug}`,
+              },
+            ],
+          },
+        ], threadTs);
+      } else {
+        // Project complete
+        return postAsRole('PM', channel, 'Project complete!', [
+          {
+            type: 'header',
+            text: { type: 'plain_text', text: '🎉 Project Complete!', emoji: true },
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*${projectName}* - All sprints have been completed!\n\nSprint ${sprintNumber} (${sprintName}) was the final sprint.\n\n✅ Code Review passed\n✅ QA Testing passed`,
+            },
+          },
+          {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: '📄 View Project', emoji: true },
+                style: 'primary',
+                url: `${baseUrl}/projects/${projectSlug}`,
+              },
+            ],
+          },
+        ], threadTs);
+      }
+    });
+
+    // Emit project/completed event if no more sprints
+    if (!nextSprintInfo.hasNext) {
+      await step.run('emit-project-completed', async () => {
+        const totalSprints = await prisma.sprint.count({ where: { projectId } });
+        await inngest.send({
+          name: 'project/completed',
+          data: { projectId, projectName, clientName, totalSprints },
+        });
+      });
+    }
+
+    console.log(`[ContinueWorkflow] Complete for ${projectName}, Sprint ${sprintNumber}`);
+
+    return {
+      success: true,
+      projectId,
+      projectName,
+      sprintNumber,
+      reviewApproved: true,
+      qaApproved: true,
+      nextSprint: nextSprintInfo.hasNext ? nextSprintInfo : null,
+    };
+  }
+);
+
 // All functions to serve
 const functions = [
   testFunction,
@@ -4210,6 +4637,8 @@ const functions = [
   handleSprintFeedback,
   // Worker handlers
   handleImplementationWork,
+  // Continue workflow (post-manual-CLI)
+  handleWorkflowContinue,
 ];
 
 // Create and export the serve handler

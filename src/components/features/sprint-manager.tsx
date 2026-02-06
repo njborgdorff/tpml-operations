@@ -94,6 +94,8 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
   const [devUrlInput, setDevUrlInput] = useState('');
   const [handoffContent, setHandoffContent] = useState<string | null>(null);
 
+  const [isContinuing, setIsContinuing] = useState(false);
+
   const hasHandoff = artifacts.some(a => a.name === 'HANDOFF_CTO_TO_IMPLEMENTER.md');
   const activeSprint = sprints.find(s => s.status === 'IN_PROGRESS' || s.status === 'REVIEW');
   const canKickoff = project.approvalStatus === 'APPROVED' && !hasHandoff && !activeSprint;
@@ -174,6 +176,29 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
       toast.error(error instanceof Error ? error.message : 'Update failed');
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  const handleContinueWorkflow = async () => {
+    setIsContinuing(true);
+    try {
+      const response = await fetch(`/api/projects/${project.id}/continue-workflow`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to continue workflow');
+      }
+
+      toast.success('Workflow re-engaged! Review and QA running...');
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to continue workflow');
+    } finally {
+      setIsContinuing(false);
     }
   };
 
@@ -603,6 +628,20 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
                 <Copy className="h-4 w-4 mr-2" />
               )}
               {copiedCommand ? 'Copied!' : 'Copy Prompt'}
+            </Button>
+
+            {/* Continue Workflow - re-engage automated review/QA after manual CLI */}
+            <Button
+              onClick={handleContinueWorkflow}
+              disabled={isContinuing}
+              className="bg-purple-600 hover:bg-purple-700"
+            >
+              {isContinuing ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Rocket className="h-4 w-4 mr-2" />
+              )}
+              {isContinuing ? 'Starting...' : 'Continue Workflow'}
             </Button>
 
             <div className="flex gap-2 pt-2">
