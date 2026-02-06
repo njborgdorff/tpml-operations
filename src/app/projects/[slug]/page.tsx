@@ -9,6 +9,7 @@ import { DeleteProjectButton } from '@/components/features/delete-project-button
 import { ReinitiateButton } from '@/components/features/reinitiate-button';
 import { ResetProjectButton } from '@/components/features/reset-project-button';
 import { ArchiveProjectButton } from '@/components/features/archive-project-button';
+import { RestoreProjectButton } from '@/components/features/restore-project-button';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -98,7 +99,12 @@ export default async function ProjectPage({ params }: PageProps) {
               {approvalIcons[project.approvalStatus]}
               {project.approvalStatus}
             </Badge>
-            {project.status !== 'FINISHED' && (
+            {project.status === 'FINISHED' ? (
+              <RestoreProjectButton
+                projectId={project.id}
+                projectName={project.name}
+              />
+            ) : (
               <ArchiveProjectButton
                 projectId={project.id}
                 projectName={project.name}

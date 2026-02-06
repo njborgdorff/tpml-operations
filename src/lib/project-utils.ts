@@ -37,7 +37,7 @@ export const FINISHED_WORKFLOW_TRANSITIONS: Partial<Record<ProjectStatus, Projec
   [ProjectStatus.ACTIVE]: [ProjectStatus.COMPLETE, ProjectStatus.FINISHED],
   [ProjectStatus.COMPLETE]: [ProjectStatus.IN_PROGRESS, ProjectStatus.APPROVED, ProjectStatus.FINISHED],
   [ProjectStatus.COMPLETED]: [ProjectStatus.FINISHED],
-  [ProjectStatus.FINISHED]: [],
+  [ProjectStatus.FINISHED]: [ProjectStatus.ACTIVE],
   [ProjectStatus.CANCELLED]: [ProjectStatus.FINISHED],
 }
 
