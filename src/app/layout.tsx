@@ -24,8 +24,8 @@ export default function RootLayout({
             <div className="container mx-auto px-4 py-4">
               <nav className="flex items-center justify-between">
                 <div className="flex items-center space-x-6">
-                  <Link href="/dashboard" className="font-semibold text-xl hover:text-foreground transition-colors">
-                    Finished Project Management
+                  <Link href="/projects" className="font-semibold text-xl hover:text-foreground transition-colors">
+                    TPML Operations
                   </Link>
                   <NavLinks />
                 </div>
