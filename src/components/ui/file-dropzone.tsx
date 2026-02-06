@@ -25,6 +25,9 @@ const DEFAULT_ACCEPTED_TYPES = [
   'text/markdown',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/csv',
   'image/png',
   'image/jpeg',
   'image/gif',
@@ -45,7 +48,8 @@ export function FileDropzone({
 
   const processFile = useCallback(async (file: File): Promise<UploadedFile | null> => {
     // Check file type
-    if (!acceptedTypes.includes(file.type) && !file.name.endsWith('.md')) {
+    const extAllowed = ['.md', '.csv', '.xls', '.xlsx'].some(ext => file.name.toLowerCase().endsWith(ext));
+    if (!acceptedTypes.includes(file.type) && !extAllowed) {
       setError(`File type not supported: ${file.type || file.name}`);
       return null;
     }
@@ -142,7 +146,8 @@ export function FileDropzone({
 
   const getFileIcon = (type: string): string => {
     if (type.includes('pdf')) return 'PDF';
-    if (type.includes('word') || type.includes('document')) return 'DOC';
+    if (type.includes('word') || type.includes('wordprocessingml')) return 'DOC';
+    if (type.includes('excel') || type.includes('spreadsheetml') || type.includes('csv')) return 'XLS';
     if (type.includes('image')) return 'IMG';
     if (type.includes('markdown') || type.includes('text')) return 'TXT';
     return 'FILE';
@@ -174,7 +179,7 @@ export function FileDropzone({
             {isDragging ? 'Drop files here' : 'Drop files or click to upload'}
           </div>
           <p className="text-sm text-muted-foreground">
-            PDF, Word, Markdown, images, or text files (max {Math.round(maxSizeBytes / 1024 / 1024)}MB each)
+            PDF, Word, Excel, CSV, Markdown, images, or text files (max {Math.round(maxSizeBytes / 1024 / 1024)}MB each)
           </p>
         </div>
       </div>
