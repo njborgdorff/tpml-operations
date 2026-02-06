@@ -8,5 +8,5 @@ export type {
 } from './project'
 
 // Re-export intake types and schemas
-export { IntakeSchema } from '@/lib/validation/schemas'
-export type { IntakeData, NewProjectData, NewFeatureData, BugFixData } from './intake'
+export { IntakeSchema, ProjectTypeEnum } from './intake'
+export type { IntakeData, NewProjectData, NewFeatureData, BugFixData, ProjectType } from './intake'
