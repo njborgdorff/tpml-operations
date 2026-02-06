@@ -1,35 +1,32 @@
 import { Badge } from '@/components/ui/badge'
 import { ProjectStatus } from '@prisma/client'
+import { formatStatus } from '@/lib/project-utils'
 
 interface ProjectStatusBadgeProps {
   status: ProjectStatus
 }
 
-const statusConfig = {
-  [ProjectStatus.IN_PROGRESS]: {
-    label: 'In Progress',
-    variant: 'info' as const,
-  },
-  [ProjectStatus.COMPLETE]: {
-    label: 'Complete',
-    variant: 'success' as const,
-  },
-  [ProjectStatus.APPROVED]: {
-    label: 'Approved',
-    variant: 'default' as const,
-  },
-  [ProjectStatus.FINISHED]: {
-    label: 'Finished',
-    variant: 'secondary' as const,
-  },
+type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning' | 'info'
+
+const statusConfig: Record<string, { variant: BadgeVariant }> = {
+  [ProjectStatus.INTAKE]: { variant: 'default' },
+  [ProjectStatus.PLANNING]: { variant: 'default' },
+  [ProjectStatus.REVIEW]: { variant: 'warning' },
+  [ProjectStatus.APPROVED]: { variant: 'success' },
+  [ProjectStatus.IN_PROGRESS]: { variant: 'info' },
+  [ProjectStatus.ACTIVE]: { variant: 'info' },
+  [ProjectStatus.COMPLETE]: { variant: 'warning' },
+  [ProjectStatus.COMPLETED]: { variant: 'success' },
+  [ProjectStatus.FINISHED]: { variant: 'secondary' },
+  [ProjectStatus.CANCELLED]: { variant: 'destructive' },
 }
 
 export function ProjectStatusBadge({ status }: ProjectStatusBadgeProps) {
-  const config = statusConfig[status]
-  
+  const config = statusConfig[status] || { variant: 'secondary' as const }
+
   return (
     <Badge variant={config.variant}>
-      {config.label}
+      {formatStatus(status)}
     </Badge>
   )
 }

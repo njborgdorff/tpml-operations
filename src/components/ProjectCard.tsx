@@ -1,37 +1,83 @@
-import { useState } from 'react'
+'use client'
+
+import { useState, useRef, useEffect } from 'react'
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import { ProjectStatusBadge } from './ProjectStatusBadge'
-import { ProjectStatusSelect } from './ProjectStatusSelect'
 import { Project, ProjectStatus } from '@/types/project'
-import { formatRelativeTime } from '@/lib/utils'
+import { formatDate } from '@/lib/utils'
 
 interface ProjectCardProps {
   project: Project
   onStatusUpdate: (projectId: string, status: ProjectStatus) => Promise<void>
+  isUpdating?: boolean
   className?: string
 }
 
-export function ProjectCard({ project, onStatusUpdate, className }: ProjectCardProps) {
+// Actions available for each status
+function getAvailableActions(status: ProjectStatus): { label: string; status: ProjectStatus }[] {
+  switch (status) {
+    case ProjectStatus.IN_PROGRESS:
+      return [{ label: 'Mark as Complete', status: ProjectStatus.COMPLETE }]
+    case ProjectStatus.COMPLETE:
+      return [
+        { label: 'Mark as In Progress', status: ProjectStatus.IN_PROGRESS },
+        { label: 'Mark as Approved', status: ProjectStatus.APPROVED },
+      ]
+    case ProjectStatus.APPROVED:
+      return [
+        { label: 'Mark as Complete', status: ProjectStatus.COMPLETE },
+        { label: 'Move to Finished', status: ProjectStatus.FINISHED },
+      ]
+    default:
+      return []
+  }
+}
+
+export function ProjectCard({ project, onStatusUpdate, isUpdating: externalUpdating, className }: ProjectCardProps) {
   const [isUpdating, setIsUpdating] = useState(false)
+  const [updateError, setUpdateError] = useState<string | null>(null)
+  const [showActions, setShowActions] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  const updating = externalUpdating || isUpdating
+
+  // Close menu on outside click
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowActions(false)
+      }
+    }
+
+    if (showActions) {
+      document.addEventListener('click', handleClickOutside)
+      return () => document.removeEventListener('click', handleClickOutside)
+    }
+  }, [showActions])
 
   const handleStatusChange = async (newStatus: ProjectStatus) => {
     setIsUpdating(true)
+    setShowActions(false)
+    setUpdateError(null)
     try {
       await onStatusUpdate(project.id, newStatus)
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update status'
+      setUpdateError(message)
       console.error('Failed to update status:', error)
     } finally {
       setIsUpdating(false)
     }
   }
+
+  const actions = getAvailableActions(project.status)
+  const ownerName = project.owner?.name || project.owner?.email || null
 
   return (
     <Card className={className}>
@@ -39,41 +85,62 @@ export function ProjectCard({ project, onStatusUpdate, className }: ProjectCardP
         <div className="flex items-start justify-between">
           <div className="space-y-1">
             <CardTitle className="text-lg">{project.name}</CardTitle>
-            {project.description && (
-              <CardDescription>{project.description}</CardDescription>
-            )}
+            <p className="text-sm text-muted-foreground">
+              {project.description || 'No description provided'}
+            </p>
           </div>
           <ProjectStatusBadge status={project.status} />
         </div>
       </CardHeader>
-      
+
       <CardContent>
-        <div className="text-sm text-muted-foreground">
-          <p>Created: {formatRelativeTime(project.createdAt)}</p>
-          <p>Updated: {formatRelativeTime(project.updatedAt)}</p>
+        <div className="text-sm text-muted-foreground space-y-1">
+          {ownerName && <p>{ownerName}</p>}
+          <p>Created {formatDate(project.createdAt)}</p>
           {project.archivedAt && (
-            <p>Archived: {formatRelativeTime(project.archivedAt)}</p>
+            <p>Archived {formatDate(project.archivedAt)}</p>
           )}
         </div>
       </CardContent>
 
-      <CardFooter className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <span className="text-sm text-muted-foreground">Status:</span>
-          <ProjectStatusSelect
-            value={project.status}
-            onChange={handleStatusChange}
-            disabled={isUpdating || project.status === ProjectStatus.FINISHED}
-            className="w-32"
-          />
-        </div>
-        
-        {project.statusHistory && project.statusHistory.length > 0 && (
-          <Button variant="ghost" size="sm">
-            View History
-          </Button>
-        )}
-      </CardFooter>
+      {updateError && (
+        <CardContent className="pt-0 pb-2">
+          <p className="text-sm text-destructive">{updateError}</p>
+        </CardContent>
+      )}
+
+      {actions.length > 0 && (
+        <CardFooter>
+          <div className="relative" ref={menuRef}>
+            {updating ? (
+              <span className="text-sm text-muted-foreground">Updating...</span>
+            ) : (
+              <>
+                <button
+                  onClick={() => setShowActions(!showActions)}
+                  disabled={updating}
+                  className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3"
+                >
+                  Actions
+                </button>
+                {showActions && (
+                  <div className="absolute bottom-full left-0 mb-1 w-48 rounded-md border bg-popover p-1 shadow-md z-50">
+                    {actions.map((action) => (
+                      <button
+                        key={action.status}
+                        onClick={() => handleStatusChange(action.status)}
+                        className="w-full text-left rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer"
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </CardFooter>
+      )}
     </Card>
   )
 }

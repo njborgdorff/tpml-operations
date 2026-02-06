@@ -1870,9 +1870,18 @@ const handleProjectKickoff = inngest.createFunction(
       handoffContent,
       reinitiated,
       projectPath,
+      projectType = 'NEW_PROJECT', // Default for backwards compatibility
+      bugDescription: _bugDescription,
+      featureDescription: _featureDescription,
+      targetCodebase,
     } = event.data;
 
     const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+    const isBugFix = projectType === 'BUG_FIX';
+    const isFeature = projectType === 'NEW_FEATURE';
+    const isNewProject = projectType === 'NEW_PROJECT';
+
+    console.log(`[Kickoff] Starting ${projectType} workflow for ${projectName}`);
 
     // Validate handoff content - if missing, revert project to planning stage
     if (!handoffContent || handoffContent.trim().length === 0) {
@@ -1905,17 +1914,35 @@ const handleProjectKickoff = inngest.createFunction(
       };
     }
 
-    // Step 1: CTO announces project kickoff (or reinitiation)
+    // Step 1: Announce kickoff with project type context
     const kickoffMessage = await step.run('announce-kickoff', async () => {
-      const headerText = reinitiated ? '🔄 Project Re-engagement' : '🚀 Project Kickoff';
-      const statusText = reinitiated
-        ? `*${projectName}* for *${clientName}* is being re-engaged!\n\n*Sprint ${sprintNumber}:* ${sprintName}\n\n_This is a workflow reinitiation - resuming from where we left off._`
-        : `*${projectName}* for *${clientName}* is now in implementation!\n\n*Sprint ${sprintNumber}:* ${sprintName}`;
-      const contextText = reinitiated
+      const typeEmoji = isBugFix ? '🐛' : isFeature ? '✨' : '🚀';
+      const typeLabel = isBugFix ? 'Bug Fix' : isFeature ? 'Feature' : 'Project';
+      const headerText = reinitiated ? `🔄 ${typeLabel} Re-engagement` : `${typeEmoji} ${typeLabel} Kickoff`;
+
+      let statusText: string;
+      if (isBugFix) {
+        statusText = `*${projectName}* for *${clientName}*\n\n*Target:* ${targetCodebase || projectSlug}\n\n_Bug fix workflow - proceeding directly to implementation._`;
+      } else if (isFeature) {
+        statusText = `*${projectName}* for *${clientName}*\n\n*Target:* ${targetCodebase || projectSlug}\n\n_Feature workflow - lightweight review then implementation._`;
+      } else if (reinitiated) {
+        statusText = `*${projectName}* for *${clientName}* is being re-engaged!\n\n*Sprint ${sprintNumber}:* ${sprintName}\n\n_This is a workflow reinitiation - resuming from where we left off._`;
+      } else {
+        statusText = `*${projectName}* for *${clientName}* is now in implementation!\n\n*Sprint ${sprintNumber}:* ${sprintName}`;
+      }
+
+      const contextText = isBugFix
+        ? `_Simplified bug fix workflow - skipping planning reviews_`
+        : isFeature
+        ? `_Feature workflow - brief review then implementation_`
+        : reinitiated
         ? `_Re-engaging Implementer with existing handoff document_`
         : `_Handoff from CTO to Implementer complete_`;
 
-      return postAsRole('CTO', channel, reinitiated ? `Project re-engagement: ${projectName}` : `Project kickoff: ${projectName}`, [
+      // For bug fixes, announce from Implementer directly
+      const announceRole = isBugFix ? 'Implementer' : 'CTO';
+
+      return postAsRole(announceRole, channel, reinitiated ? `${typeLabel} re-engagement: ${projectName}` : `${typeLabel} kickoff: ${projectName}`, [
         {
           type: 'header',
           text: { type: 'plain_text', text: headerText, emoji: true },
@@ -1930,7 +1957,7 @@ const handleProjectKickoff = inngest.createFunction(
         {
           type: 'section',
           fields: [
-            { type: 'mrkdwn', text: `*Project ID:*\n\`${projectId}\`` },
+            { type: 'mrkdwn', text: `*Type:*\n${projectType}` },
             { type: 'mrkdwn', text: `*Status:*\nIN_PROGRESS` },
           ],
         },
@@ -2025,17 +2052,46 @@ DO NOT ask for documents. DO NOT say you need more information. DO NOT ask "shou
       });
     }
 
-    // Step 6: CTO reviews Implementer's plan and provides feedback/approval
-    const ctoResponse = await step.run('cto-review-plan', async () => {
-      const ctoContext = `## Implementer's Plan for Sprint ${sprintNumber}
+    // =========================================================================
+    // REVIEW PHASE - Skipped for BUG_FIX, lightweight for NEW_FEATURE
+    // =========================================================================
+
+    // Bug fixes skip all reviews and go straight to implementation
+    if (isBugFix) {
+      console.log(`[Kickoff] Bug fix workflow - skipping CTO and Architect reviews`);
+      await step.run('skip-reviews-notice', async () => {
+        return postAsRole('Implementer', channel, 'Proceeding directly to implementation', [
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: `_Bug fix workflow - skipping planning reviews. Proceeding to implementation._` },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
+    } else {
+      // NEW_PROJECT and NEW_FEATURE get CTO review
+      // Step 6: CTO reviews Implementer's plan and provides feedback/approval
+      const ctoResponse = await step.run('cto-review-plan', async () => {
+        const ctoContext = `## Implementer's Plan for ${isFeature ? 'Feature' : `Sprint ${sprintNumber}`}
 
 ${implementerResponse.response}
 
 ## Handoff Document Summary
 ${handoffContent ? handoffContent.substring(0, 1500) : 'See handoff document for details'}`;
 
-      const ctoPrompt = reinitiated
-        ? `The project "${projectName}" has been RE-ENGAGED after a workflow interruption.
+        const ctoPrompt = isFeature
+          ? `The feature "${projectName}" is being added to an existing codebase.
+
+The Implementer has outlined their plan above. As CTO, please:
+1. Verify the approach fits with the existing codebase patterns
+2. Flag any integration concerns
+3. Confirm the scope is appropriate
+4. Give approval to proceed
+
+Keep your response brief - this is a feature addition, not a new project.`
+          : reinitiated
+          ? `The project "${projectName}" has been RE-ENGAGED after a workflow interruption.
 
 The Implementer has outlined their plan above. As CTO, please:
 1. Acknowledge the re-engagement and confirm you understand the context
@@ -2045,7 +2101,7 @@ The Implementer has outlined their plan above. As CTO, please:
 5. Give explicit approval to proceed with implementation
 
 Keep your response concise but ensure technical oversight is clear.`
-        : `The project "${projectName}" has kicked off and the Implementer has outlined their plan above.
+          : `The project "${projectName}" has kicked off and the Implementer has outlined their plan above.
 
 As CTO, please:
 1. Review the Implementer's outlined approach
@@ -2056,35 +2112,41 @@ As CTO, please:
 
 Keep your response concise but ensure technical oversight is clear.`;
 
-      return generateRoleResponse(
-        'CTO',
-        ctoPrompt,
-        channel,
-        kickoffMessage?.ts,
-        ctoContext,
-        { skipKnowledge: true }
-      );
-    });
+        return generateRoleResponse(
+          'CTO',
+          ctoPrompt,
+          channel,
+          kickoffMessage?.ts,
+          ctoContext,
+          { skipKnowledge: true }
+        );
+      });
 
-    // Step 7: Post CTO's response
-    await step.run('post-cto-response', async () => {
-      return postAsRole('CTO', channel, ctoResponse.response, [
-        {
-          type: 'section',
-          text: { type: 'mrkdwn', text: ctoResponse.response },
-        },
-        {
-          type: 'context',
-          elements: [
-            { type: 'mrkdwn', text: `_CTO technical review complete - handing off to Architect_` },
-          ],
-        },
-      ], kickoffMessage?.ts);
-    });
+      // Step 7: Post CTO's response
+      await step.run('post-cto-response', async () => {
+        const contextMsg = isFeature
+          ? `_CTO review complete - Implementer may proceed with feature_`
+          : `_CTO technical review complete - handing off to Architect_`;
 
-    // Step 8: Architect reviews technical approach
-    const architectResponse = await step.run('architect-review', async () => {
-      const architectContext = `## Project: ${projectName}
+        return postAsRole('CTO', channel, ctoResponse.response, [
+          {
+            type: 'section',
+            text: { type: 'mrkdwn', text: ctoResponse.response },
+          },
+          {
+            type: 'context',
+            elements: [
+              { type: 'mrkdwn', text: contextMsg },
+            ],
+          },
+        ], kickoffMessage?.ts);
+      });
+
+      // NEW_PROJECT gets full Architect review, NEW_FEATURE skips it
+      if (isNewProject) {
+        // Step 8: Architect reviews technical approach
+        const architectResponse = await step.run('architect-review', async () => {
+          const architectContext = `## Project: ${projectName}
 ## Sprint ${sprintNumber}: ${sprintName}
 
 ## Implementer's Plan
@@ -2096,7 +2158,7 @@ ${ctoResponse.response}
 ## Handoff Document Summary
 ${handoffContent ? handoffContent.substring(0, 1500) : 'See handoff document'}`;
 
-      const architectPrompt = `The CTO has reviewed and approved the Implementer's plan for "${projectName}" Sprint ${sprintNumber}.
+          const architectPrompt = `The CTO has reviewed and approved the Implementer's plan for "${projectName}" Sprint ${sprintNumber}.
 
 As Architect, please:
 1. Validate the technical approach aligns with our architecture patterns
@@ -2107,31 +2169,36 @@ As Architect, please:
 
 Keep your response focused on architecture validation. Be concise but thorough.`;
 
-      return generateRoleResponse(
-        'Architect',
-        architectPrompt,
-        channel,
-        kickoffMessage?.ts,
-        architectContext,
-        { skipKnowledge: true }
-      );
-    });
+          return generateRoleResponse(
+            'Architect',
+            architectPrompt,
+            channel,
+            kickoffMessage?.ts,
+            architectContext,
+            { skipKnowledge: true }
+          );
+        });
 
-    // Step 9: Post Architect's response
-    await step.run('post-architect-response', async () => {
-      return postAsRole('Architect', channel, architectResponse.response, [
-        {
-          type: 'section',
-          text: { type: 'mrkdwn', text: architectResponse.response },
-        },
-        {
-          type: 'context',
-          elements: [
-            { type: 'mrkdwn', text: `_Architecture review complete - Implementer may proceed_` },
-          ],
-        },
-      ], kickoffMessage?.ts);
-    });
+        // Step 9: Post Architect's response
+        await step.run('post-architect-response', async () => {
+          return postAsRole('Architect', channel, architectResponse.response, [
+            {
+              type: 'section',
+              text: { type: 'mrkdwn', text: architectResponse.response },
+            },
+            {
+              type: 'context',
+              elements: [
+                { type: 'mrkdwn', text: `_Architecture review complete - Implementer may proceed_` },
+              ],
+            },
+          ], kickoffMessage?.ts);
+        });
+      } else if (isFeature) {
+        // Skip Architect review for features
+        console.log(`[Kickoff] Feature workflow - skipping Architect review`);
+      }
+    }
 
     // =========================================================================
     // AUTOMATED ROLE-TO-ROLE WORKFLOW WITH FEEDBACK LOOPS

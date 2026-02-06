@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthSession } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { getSession } from '@/lib/auth/config'
+import { prisma } from '@/lib/db/prisma'
 
 interface RouteParams {
   params: {
@@ -9,28 +9,20 @@ interface RouteParams {
 }
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: RouteParams
 ) {
   try {
-    const session = await getAuthSession()
-    if (!session?.user?.email) {
+    const session = await getSession()
+    if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-    })
-
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
-    }
-
     // Verify project exists and user has access
-    const project = await prisma.project.findUnique({
+    const project = await prisma.project.findFirst({
       where: {
         id: params.id,
-        userId: user.id,
+        ownerId: session.user.id,
       },
     })
 
@@ -56,7 +48,7 @@ export async function GET(
       },
     })
 
-    return NextResponse.json({ history })
+    return NextResponse.json(history)
   } catch (error) {
     console.error('Failed to fetch project history:', error)
     return NextResponse.json(

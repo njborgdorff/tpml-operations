@@ -1,23 +1,23 @@
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { ProjectCard } from '@/components/ProjectCard';
-import { ProjectFilter } from '@/components/ProjectFilter';
-import { useProjects } from '@/hooks/useProjects';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState } from 'react'
+import { ProjectCard } from '@/components/ProjectCard'
+import { ProjectFilter } from '@/components/ProjectFilter'
+import { useProjects, FilterType } from '@/hooks/useProjects'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { ProjectStatus } from '@prisma/client'
 
 export default function DashboardPage() {
-  const [filter, setFilter] = useState<'ALL' | 'ACTIVE' | 'FINISHED'>('ACTIVE');
-  
-  const { 
-    projects, 
-    loading, 
-    error, 
-    statusChangeLoading, 
-    refetch, 
-    updateProjectStatus 
-  } = useProjects({ filter });
+  const [filter, setFilter] = useState<FilterType>('ACTIVE')
+
+  const {
+    projects,
+    loading,
+    error,
+    refetch,
+    updateProjectStatus
+  } = useProjects({ filter })
 
   if (loading) {
     return (
@@ -29,30 +29,36 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
-    );
+    )
   }
 
   const getFilterTitle = () => {
     switch (filter) {
       case 'ACTIVE':
-        return 'Active Projects';
+        return 'Active Projects'
       case 'FINISHED':
-        return 'Finished Projects';
+        return 'Finished Projects'
       default:
-        return 'All Projects';
+        return 'All Projects'
     }
-  };
+  }
 
   const getFilterDescription = () => {
     switch (filter) {
       case 'ACTIVE':
-        return 'Projects that are in progress or complete, but not yet finished';
+        return 'Projects that are in progress, complete, or approved'
       case 'FINISHED':
-        return 'Projects that have been archived and completed';
+        return 'Projects that have been archived'
       default:
-        return 'All projects regardless of status';
+        return 'All projects regardless of status'
     }
-  };
+  }
+
+  // Compute status counts from current projects
+  const statusCounts = projects.reduce((acc, p) => {
+    acc[p.status] = (acc[p.status] || 0) + 1
+    return acc
+  }, {} as Record<string, number>)
 
   return (
     <div className="container mx-auto py-8 space-y-6">
@@ -105,11 +111,11 @@ export default function DashboardPage() {
             <CardHeader>
               <CardTitle>No Projects Found</CardTitle>
               <CardDescription>
-                {filter === 'ACTIVE' 
-                  ? "No active projects to display. Create a new project to get started."
+                {filter === 'ACTIVE'
+                  ? 'No active projects to display. Create a new project to get started.'
                   : filter === 'FINISHED'
-                  ? "No finished projects yet. Complete and approve some projects first."
-                  : "No projects found. Create your first project to get started."
+                  ? 'No finished projects yet. Complete and approve some projects first.'
+                  : 'No projects found. Create your first project to get started.'
                 }
               </CardDescription>
             </CardHeader>
@@ -120,8 +126,7 @@ export default function DashboardPage() {
               <ProjectCard
                 key={project.id}
                 project={project}
-                onStatusChange={updateProjectStatus}
-                onStatusChangeLoading={statusChangeLoading}
+                onStatusUpdate={updateProjectStatus}
               />
             ))}
           </div>
@@ -129,33 +134,54 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-3">
-            <CardDescription>Total Projects</CardDescription>
+            <CardDescription>Total Shown</CardDescription>
             <CardTitle className="text-2xl">{projects.length}</CardTitle>
           </CardHeader>
         </Card>
-        
-        <Card>
-          <CardHeader className="pb-3">
-            <CardDescription>Filter Applied</CardDescription>
-            <CardTitle className="text-lg">{getFilterTitle()}</CardTitle>
-          </CardHeader>
-        </Card>
-        
-        <Card>
-          <CardHeader className="pb-3">
-            <CardDescription>Last Updated</CardDescription>
-            <CardTitle className="text-sm">
-              {projects.length > 0 
-                ? new Date(Math.max(...projects.map(p => new Date(p.updatedAt).getTime()))).toLocaleDateString()
-                : 'No projects'
-              }
-            </CardTitle>
-          </CardHeader>
-        </Card>
+
+        {filter === 'FINISHED' ? (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardDescription>Finished</CardDescription>
+              <CardTitle className="text-2xl">
+                {statusCounts[ProjectStatus.FINISHED] || 0}
+              </CardTitle>
+            </CardHeader>
+          </Card>
+        ) : (
+          <>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardDescription>In Progress</CardDescription>
+                <CardTitle className="text-2xl">
+                  {statusCounts[ProjectStatus.IN_PROGRESS] || 0}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardDescription>Complete</CardDescription>
+                <CardTitle className="text-2xl">
+                  {statusCounts[ProjectStatus.COMPLETE] || 0}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardDescription>Approved</CardDescription>
+                <CardTitle className="text-2xl">
+                  {statusCounts[ProjectStatus.APPROVED] || 0}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+          </>
+        )}
       </div>
     </div>
-  );
+  )
 }

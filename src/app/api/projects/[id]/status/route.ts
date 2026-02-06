@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthSession } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { getSession } from '@/lib/auth/config'
+import { prisma } from '@/lib/db/prisma'
 import { ProjectStatus } from '@prisma/client'
 import { z } from 'zod'
+import { FINISHED_WORKFLOW_TRANSITIONS } from '@/lib/project-utils'
 
 const updateStatusSchema = z.object({
   status: z.nativeEnum(ProjectStatus),
@@ -19,27 +20,19 @@ export async function PATCH(
   { params }: RouteParams
 ) {
   try {
-    const session = await getAuthSession()
-    if (!session?.user?.email) {
+    const session = await getSession()
+    if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-    })
-
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
     const body = await request.json()
     const { status } = updateStatusSchema.parse(body)
 
-    // Get current project
-    const currentProject = await prisma.project.findUnique({
+    // Get current project (user must be owner)
+    const currentProject = await prisma.project.findFirst({
       where: {
         id: params.id,
-        userId: user.id, // Ensure user owns the project
+        ownerId: session.user.id,
       },
     })
 
@@ -47,49 +40,75 @@ export async function PATCH(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    // Validate status transition
-    const isValidTransition = validateStatusTransition(currentProject.status, status)
-    if (!isValidTransition) {
+    // Validate status transition using shared transition map
+    const allowed = FINISHED_WORKFLOW_TRANSITIONS[currentProject.status]
+    if (!allowed || !allowed.includes(status)) {
       return NextResponse.json(
-        { error: 'Invalid status transition' },
+        { error: `Invalid status transition from ${currentProject.status} to ${status}` },
         { status: 400 }
       )
     }
 
-    // Update project status
-    const updatedProject = await prisma.project.update({
-      where: { id: params.id },
-      data: {
-        status,
-        archivedAt: status === ProjectStatus.FINISHED ? new Date() : null,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
+    // Update with optimistic locking: WHERE status = currentStatus prevents
+    // race conditions where another request changed the status between our
+    // read and write. If 0 rows updated, the status changed underneath us.
+    const [updatedProject] = await prisma.$transaction(async (tx) => {
+      const updated = await tx.project.updateMany({
+        where: {
+          id: params.id,
+          ownerId: session.user.id,
+          status: currentProject.status, // optimistic lock
+        },
+        data: {
+          status,
+          archivedAt: status === ProjectStatus.FINISHED ? new Date() : null,
+        },
+      })
+
+      if (updated.count === 0) {
+        throw new Error('CONFLICT')
+      }
+
+      // Fetch the updated project with includes
+      const project = await tx.project.findUniqueOrThrow({
+        where: { id: params.id },
+        include: {
+          client: true,
+          owner: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
           },
         },
-      },
+      })
+
+      const history = await tx.projectStatusHistory.create({
+        data: {
+          projectId: params.id,
+          oldStatus: currentProject.status,
+          newStatus: status,
+          changedBy: session.user.id,
+        },
+      })
+
+      return [project, history] as const
     })
 
-    // Create status history entry
-    await prisma.projectStatusHistory.create({
-      data: {
-        projectId: params.id,
-        oldStatus: currentProject.status,
-        newStatus: status,
-        changedBy: user.id,
-      },
-    })
-
-    return NextResponse.json({ project: updatedProject })
+    return NextResponse.json(updatedProject)
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: 'Invalid request data', details: error.errors },
+        { error: 'Invalid request data', details: error.issues },
         { status: 400 }
+      )
+    }
+
+    if (error instanceof Error && error.message === 'CONFLICT') {
+      return NextResponse.json(
+        { error: 'Project status was changed by another request. Please refresh and try again.' },
+        { status: 409 }
       )
     }
 
@@ -99,19 +118,4 @@ export async function PATCH(
       { status: 500 }
     )
   }
-}
-
-function validateStatusTransition(
-  currentStatus: ProjectStatus,
-  newStatus: ProjectStatus
-): boolean {
-  // Define valid transitions
-  const validTransitions: Record<ProjectStatus, ProjectStatus[]> = {
-    [ProjectStatus.IN_PROGRESS]: [ProjectStatus.COMPLETE],
-    [ProjectStatus.COMPLETE]: [ProjectStatus.IN_PROGRESS, ProjectStatus.APPROVED],
-    [ProjectStatus.APPROVED]: [ProjectStatus.COMPLETE, ProjectStatus.FINISHED],
-    [ProjectStatus.FINISHED]: [], // No transitions allowed from finished
-  }
-
-  return validTransitions[currentStatus]?.includes(newStatus) || false
 }

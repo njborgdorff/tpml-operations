@@ -65,11 +65,17 @@ export async function POST(
       );
     }
 
-    // Get artifacts content
+    // Get project type (defaults to NEW_PROJECT for backwards compatibility)
+    const projectType = (project as { projectType?: string }).projectType || 'NEW_PROJECT';
+    const bugDescription = (project as { bugDescription?: string }).bugDescription;
+
+    // Get artifacts content - requirements vary by project type
     const backlogArtifact = project.artifacts.find(a => a.type === 'BACKLOG');
     const architectureArtifact = project.artifacts.find(a => a.type === 'ARCHITECTURE');
 
-    if (!backlogArtifact || !architectureArtifact) {
+    // NEW_PROJECT requires full planning artifacts
+    // NEW_FEATURE and BUG_FIX can work with minimal/no planning artifacts
+    if (projectType === 'NEW_PROJECT' && (!backlogArtifact || !architectureArtifact)) {
       return NextResponse.json(
         { error: 'Missing required artifacts (BACKLOG or ARCHITECTURE)' },
         { status: 400 }
@@ -98,13 +104,35 @@ export async function POST(
       ? `C:\\tpml-ai-team\\projects\\${targetCodebase}`
       : `C:\\tpml-ai-team\\projects\\${project.slug}`;
 
-    // Generate handoff content
-    const handoffContent = generateHandoffContent(
-      project.name,
-      backlogArtifact.content,
-      architectureArtifact.content,
-      project.approvalNotes || undefined
-    );
+    // Generate handoff content based on project type
+    let handoffContent: string;
+    const intakeData = project.intakeData as Record<string, unknown>;
+
+    if (projectType === 'BUG_FIX') {
+      handoffContent = generateBugFixHandoff(
+        project.name,
+        bugDescription || (intakeData?.bugDescription as string) || 'No bug description provided',
+        (intakeData?.stepsToReproduce as string) || undefined,
+        (intakeData?.expectedBehavior as string) || undefined,
+        targetCodebase || project.slug
+      );
+    } else if (projectType === 'NEW_FEATURE') {
+      handoffContent = generateFeatureHandoff(
+        project.name,
+        (intakeData?.featureDescription as string) || 'No feature description provided',
+        (intakeData?.acceptanceCriteria as string) || undefined,
+        targetCodebase || project.slug,
+        architectureArtifact?.content
+      );
+    } else {
+      // NEW_PROJECT - full handoff
+      handoffContent = generateHandoffContent(
+        project.name,
+        backlogArtifact!.content,
+        architectureArtifact!.content,
+        project.approvalNotes || undefined
+      );
+    }
 
     // Store handoff as artifact in database
     await prisma.artifact.create({
@@ -152,9 +180,13 @@ export async function POST(
           sprintName: firstSprint?.name || 'Sprint 1',
           handoffContent,
           projectPath,
+          projectType,
+          bugDescription: bugDescription || (intakeData?.bugDescription as string),
+          featureDescription: intakeData?.featureDescription as string,
+          targetCodebase,
         },
       });
-      console.log(`[Kickoff] Sent project/kicked_off event for ${project.name}`);
+      console.log(`[Kickoff] Sent project/kicked_off event for ${project.name} (${projectType})`);
     } catch (err) {
       console.error('[Kickoff] Failed to send Inngest event:', err);
       // Don't fail the kickoff if event sending fails
@@ -359,4 +391,93 @@ function extractTechStack(architecture: string): string {
     return stackMatch[0].substring(0, 500);
   }
   return '- See ARCHITECTURE.md for details';
+}
+
+/**
+ * Generate simplified handoff for bug fixes
+ */
+function generateBugFixHandoff(
+  projectName: string,
+  bugDescription: string,
+  stepsToReproduce?: string,
+  expectedBehavior?: string,
+  codebase?: string
+): string {
+  return `# Bug Fix: ${projectName}
+
+**Date:** ${new Date().toISOString().split('T')[0]}
+**Type:** BUG_FIX
+**Codebase:** ${codebase || 'TBD'}
+
+## Bug Description
+
+${bugDescription}
+
+${stepsToReproduce ? `## Steps to Reproduce\n\n${stepsToReproduce}\n` : ''}
+${expectedBehavior ? `## Expected Behavior\n\n${expectedBehavior}\n` : ''}
+
+## Action Items for Implementer
+
+1. **Identify the bug location** - Search the codebase for relevant code
+2. **Understand the issue** - Reproduce if possible, trace the code path
+3. **Implement the fix** - Make minimal, targeted changes
+4. **Test the fix** - Verify the bug is resolved and no regressions
+5. **Create PR** - Submit for review with clear description
+
+## Guidelines
+
+- Keep changes minimal and focused on the bug
+- Don't refactor unrelated code
+- Add regression tests if appropriate
+- Document any non-obvious fixes with comments
+
+---
+
+*This is a simplified workflow for bug fixes. Proceed directly to implementation.*
+`;
+}
+
+/**
+ * Generate simplified handoff for new features
+ */
+function generateFeatureHandoff(
+  projectName: string,
+  featureDescription: string,
+  acceptanceCriteria?: string,
+  codebase?: string,
+  architectureContent?: string
+): string {
+  return `# Feature: ${projectName}
+
+**Date:** ${new Date().toISOString().split('T')[0]}
+**Type:** NEW_FEATURE
+**Codebase:** ${codebase || 'TBD'}
+
+## Feature Description
+
+${featureDescription}
+
+${acceptanceCriteria ? `## Acceptance Criteria\n\n${acceptanceCriteria}\n` : ''}
+
+## Action Items for Implementer
+
+1. **Review existing code** - Understand the patterns and conventions
+2. **Plan the implementation** - Identify files to modify/create
+3. **Implement the feature** - Follow existing patterns
+4. **Write tests** - Cover the new functionality
+5. **Create PR** - Submit for review
+
+## Guidelines
+
+- Follow existing code patterns and conventions
+- Maintain consistency with the current architecture
+- Add appropriate tests
+- Update documentation if needed
+
+${architectureContent ? `---\n\n# Reference: Architecture Notes\n\n${architectureContent.substring(0, 1500)}\n` : ''}
+
+---
+
+*This is a feature addition to an existing codebase. Follow existing patterns.*
+`;
 }
