@@ -2894,6 +2894,242 @@ Be specific and detailed. This output will be reviewed by the Reviewer role.`;
   }
 );
 
+/**
+ * Handle review request - trigger AI Reviewer and QA via Slack
+ * This is part of the hybrid manual implementation workflow
+ */
+const handleReviewRequest = inngest.createFunction(
+  {
+    id: 'review-request-handler',
+    name: 'Handle Review Request',
+  },
+  { event: 'sprint/review.requested' },
+  async ({ event, step }) => {
+    const {
+      sprintId,
+      sprintNumber,
+      sprintName,
+      sprintGoal,
+      projectId,
+      projectName,
+      projectSlug,
+      clientName,
+      projectType,
+      targetCodebase,
+      handoffContent,
+      commitUrl,
+      reviewNotes,
+      requestedBy,
+    } = event.data;
+
+    const channel = process.env.SLACK_DEFAULT_CHANNEL || 'ai-team-test';
+    const workingDir = targetCodebase || projectSlug;
+
+    console.log(`[Review] Starting review for ${projectName} Sprint ${sprintNumber}`);
+
+    // Step 1: Announce review request
+    const announceResult = await step.run('announce-review-request', async () => {
+      return postAsRole('PM', channel, `Review requested for Sprint ${sprintNumber}`, [
+        {
+          type: 'header',
+          text: { type: 'plain_text', text: '🔍 Code Review Requested', emoji: true },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*${projectName}* - Sprint ${sprintNumber}${sprintName ? `: ${sprintName}` : ''}\n\n${sprintGoal || 'Implementation complete, ready for review.'}`,
+          },
+        },
+        {
+          type: 'section',
+          fields: [
+            { type: 'mrkdwn', text: `*Requested by:*\n${requestedBy}` },
+            { type: 'mrkdwn', text: `*Project Type:*\n${projectType}` },
+          ],
+        },
+        ...(commitUrl ? [{
+          type: 'section',
+          text: { type: 'mrkdwn', text: `*Commit/PR:* <${commitUrl}|View Changes>` },
+        }] : []),
+        ...(reviewNotes ? [{
+          type: 'section',
+          text: { type: 'mrkdwn', text: `*Notes:*\n${reviewNotes}` },
+        }] : []),
+        {
+          type: 'context',
+          elements: [
+            { type: 'mrkdwn', text: `_Working directory: C:\\tpml-ai-team\\projects\\${workingDir}_` },
+          ],
+        },
+      ]);
+    });
+
+    // Step 2: Invoke Reviewer
+    const reviewerResponse = await step.run('invoke-reviewer', async () => {
+      const reviewContext = `## Project: ${projectName}
+## Client: ${clientName}
+## Sprint ${sprintNumber}: ${sprintName || 'Implementation'}
+## Project Type: ${projectType}
+## Working Directory: C:\\tpml-ai-team\\projects\\${workingDir}
+
+${commitUrl ? `## Commit/PR URL\n${commitUrl}\n` : ''}
+${reviewNotes ? `## Implementer Notes\n${reviewNotes}\n` : ''}
+
+## Sprint Goal
+${sprintGoal || 'Complete sprint deliverables as specified in the handoff.'}
+
+## Handoff Document
+${handoffContent ? handoffContent.substring(0, 3000) : 'No handoff document available.'}
+${handoffContent && handoffContent.length > 3000 ? '\n\n... (truncated)' : ''}`;
+
+      const reviewPrompt = `You are reviewing Sprint ${sprintNumber} implementation for "${projectName}".
+
+The implementer has completed their work locally and is requesting code review.
+
+Based on the sprint requirements in the handoff document above, please:
+1. Acknowledge the review request
+2. List the key deliverables that should have been implemented
+3. Note any areas of concern or questions for the implementer
+4. Provide your assessment: APPROVED, NEEDS_CHANGES, or NEEDS_DISCUSSION
+
+If you cannot see the actual code (no commit URL provided), focus on:
+- Whether the sprint goals appear achievable
+- Any clarifying questions before final approval
+- Recommendations for testing
+
+Keep your response concise and actionable.`;
+
+      return generateRoleResponse(
+        'Reviewer',
+        reviewPrompt,
+        channel,
+        announceResult?.ts,
+        reviewContext,
+        { skipKnowledge: true, skipThreadHistory: true }
+      );
+    });
+
+    // Step 3: Post Reviewer's response
+    await step.run('post-reviewer-response', async () => {
+      return postAsRole('Reviewer', channel, reviewerResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: reviewerResponse.response },
+        },
+      ], announceResult?.ts);
+    });
+
+    // Step 4: Invoke QA
+    const qaResponse = await step.run('invoke-qa', async () => {
+      const qaContext = `## Project: ${projectName}
+## Sprint ${sprintNumber}: ${sprintName || 'Implementation'}
+## Working Directory: C:\\tpml-ai-team\\projects\\${workingDir}
+
+## Reviewer's Assessment
+${reviewerResponse.response}
+
+## Sprint Goal
+${sprintGoal || 'Complete sprint deliverables.'}
+
+## Handoff Document (Testing Context)
+${handoffContent ? handoffContent.substring(0, 2000) : 'No handoff document available.'}`;
+
+      const qaPrompt = `You are the QA role reviewing Sprint ${sprintNumber} for "${projectName}".
+
+The Reviewer has provided their assessment above. As QA, please:
+1. Identify key test scenarios based on the sprint requirements
+2. List any edge cases or error scenarios to verify
+3. Note any accessibility or UX considerations
+4. Provide your QA assessment: READY_FOR_TESTING, NEEDS_TEST_PLAN, or BLOCKED
+
+If this is a local implementation (no deployed preview), recommend:
+- Manual testing steps the implementer should perform
+- Specific scenarios to verify before marking complete
+
+Keep your response focused on testability and quality assurance.`;
+
+      return generateRoleResponse(
+        'QA',
+        qaPrompt,
+        channel,
+        announceResult?.ts,
+        qaContext,
+        { skipKnowledge: true, skipThreadHistory: true }
+      );
+    });
+
+    // Step 5: Post QA's response
+    await step.run('post-qa-response', async () => {
+      return postAsRole('QA', channel, qaResponse.response, [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: qaResponse.response },
+        },
+      ], announceResult?.ts);
+    });
+
+    // Step 6: Post summary with next steps
+    const baseUrl = process.env.NEXTAUTH_URL || process.env.VERCEL_URL || 'http://localhost:3000';
+    await step.run('post-review-summary', async () => {
+      // Analyze responses to determine overall status
+      const reviewerApproved = reviewerResponse.response.toLowerCase().includes('approved');
+      const qaReady = qaResponse.response.toLowerCase().includes('ready');
+
+      const overallStatus = reviewerApproved && qaReady
+        ? '✅ Ready to Complete'
+        : reviewerApproved
+        ? '⏳ QA Testing Recommended'
+        : '⚠️ Changes Requested';
+
+      return postAsRole('PM', channel, 'Review complete', [
+        {
+          type: 'header',
+          text: { type: 'plain_text', text: `📋 Review Summary: ${overallStatus}`, emoji: true },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*Sprint ${sprintNumber}* review is complete.\n\nPlease address any feedback from Reviewer and QA, then mark the sprint complete in the dashboard.`,
+          },
+        },
+        {
+          type: 'actions',
+          elements: [
+            {
+              type: 'button',
+              text: { type: 'plain_text', text: '📊 Open Dashboard', emoji: true },
+              url: `${baseUrl}/projects/${projectSlug}`,
+            },
+          ],
+        },
+      ], announceResult?.ts);
+    });
+
+    // Update sprint with review info
+    await step.run('update-sprint-review', async () => {
+      await prisma.sprint.update({
+        where: { id: sprintId },
+        data: {
+          reviewSummary: `Reviewer: ${reviewerResponse.response.substring(0, 500)}\n\nQA: ${qaResponse.response.substring(0, 500)}`,
+        },
+      });
+      return { updated: true };
+    });
+
+    console.log(`[Review] Completed review for ${projectName} Sprint ${sprintNumber}`);
+
+    return {
+      success: true,
+      projectId,
+      sprintNumber,
+      reviewCompleted: true,
+      messageTs: announceResult?.ts,
+    };
+  }
+);
+
 // All functions to serve
 const functions = [
   testFunction,
@@ -2924,6 +3160,8 @@ const functions = [
   handleSprintRejected,
   handleProjectCompleted,
   handleSprintFeedback,
+  // Review workflow (hybrid manual implementation)
+  handleReviewRequest,
   // Worker handlers
   handleImplementationWork,
 ];

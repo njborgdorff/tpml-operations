@@ -26,6 +26,7 @@ import {
   ChevronUp,
   UserCheck,
   Rocket,
+  MessageSquare,
 } from 'lucide-react';
 import { SprintPrompt } from './sprint-prompt';
 
@@ -231,46 +232,41 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
     }
   };
 
-  // QA Verification - confirm testing passed or report issues
-  const [isVerifyingQa, setIsVerifyingQa] = useState(false);
-  const [showIssuesForm, setShowIssuesForm] = useState(false);
-  const [qaIssues, setQaIssues] = useState('');
+  // Request Review - triggers AI Reviewer and QA via Slack
+  const [isRequestingReview, setIsRequestingReview] = useState(false);
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [reviewNotes, setReviewNotes] = useState('');
+  const [commitUrl, setCommitUrl] = useState('');
 
-  const handleQaVerification = async (verified: boolean, issues?: string) => {
+  const handleRequestReview = async () => {
     if (!activeSprint) return;
 
-    setIsVerifyingQa(true);
+    setIsRequestingReview(true);
     try {
-      const response = await fetch('/api/workflow/qa-verify', {
+      const response = await fetch(`/api/sprints/${activeSprint.id}/request-review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          projectId: project.id,
-          sprintNumber: activeSprint.number,
-          verified,
-          issuesFound: issues || '',
+          commitUrl: commitUrl || undefined,
+          notes: reviewNotes || undefined,
         }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'QA verification failed');
+        throw new Error(data.error || 'Failed to request review');
       }
 
-      if (verified) {
-        toast.success('QA Verified! Workflow will continue to deployment prep.');
-      } else {
-        toast.success('Issues reported. Workflow will loop back for fixes.');
-      }
-
-      setShowIssuesForm(false);
-      setQaIssues('');
+      toast.success('Review requested! Check Slack for Reviewer and QA feedback.');
+      setShowReviewForm(false);
+      setReviewNotes('');
+      setCommitUrl('');
       router.refresh();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'QA verification failed');
+      toast.error(error instanceof Error ? error.message : 'Failed to request review');
     } finally {
-      setIsVerifyingQa(false);
+      setIsRequestingReview(false);
     }
   };
 
@@ -654,76 +650,86 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
               </div>
             </details>
 
-            {/* QA Verification Section */}
+            {/* Request Review Section */}
             <div className="border-t pt-4 mt-4">
               <h4 className="font-medium text-sm mb-3 flex items-center gap-2">
-                <FileCheck className="h-4 w-4 text-purple-600" />
-                QA Verification
+                <MessageSquare className="h-4 w-4 text-purple-600" />
+                Request AI Review
               </h4>
               <p className="text-sm text-muted-foreground mb-3">
-                After testing the implementation, confirm results:
+                After implementing locally, request review from AI Reviewer and QA via Slack:
               </p>
 
-              {!showIssuesForm ? (
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => handleQaVerification(true)}
-                    disabled={isVerifyingQa}
-                    className="bg-green-600 hover:bg-green-700"
-                  >
-                    {isVerifyingQa ? (
+              {!showReviewForm ? (
+                <Button
+                  size="sm"
+                  onClick={() => setShowReviewForm(true)}
+                  disabled={isRequestingReview || activeSprint.status === 'REVIEW'}
+                  className="bg-purple-600 hover:bg-purple-700"
+                >
+                  {activeSprint.status === 'REVIEW' ? (
+                    <>
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    ) : (
-                      <CheckCircle className="h-4 w-4 mr-2" />
-                    )}
-                    QA Verified
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => setShowIssuesForm(true)}
-                    disabled={isVerifyingQa}
-                  >
-                    <AlertCircle className="h-4 w-4 mr-2" />
-                    Issues Found
-                  </Button>
-                </div>
+                      Review In Progress...
+                    </>
+                  ) : (
+                    <>
+                      <MessageSquare className="h-4 w-4 mr-2" />
+                      Request Review
+                    </>
+                  )}
+                </Button>
               ) : (
                 <div className="space-y-3">
+                  <Input
+                    placeholder="Commit or PR URL (optional)"
+                    value={commitUrl}
+                    onChange={(e) => setCommitUrl(e.target.value)}
+                    className="text-sm"
+                  />
                   <textarea
                     className="w-full p-3 border rounded-lg text-sm"
-                    rows={4}
-                    placeholder="Describe the issues found during testing..."
-                    value={qaIssues}
-                    onChange={(e) => setQaIssues(e.target.value)}
+                    rows={3}
+                    placeholder="Notes for reviewers (optional)..."
+                    value={reviewNotes}
+                    onChange={(e) => setReviewNotes(e.target.value)}
                   />
                   <div className="flex gap-2">
                     <Button
                       size="sm"
-                      variant="destructive"
-                      onClick={() => handleQaVerification(false, qaIssues)}
-                      disabled={isVerifyingQa || !qaIssues.trim()}
+                      onClick={handleRequestReview}
+                      disabled={isRequestingReview}
+                      className="bg-purple-600 hover:bg-purple-700"
                     >
-                      {isVerifyingQa ? (
+                      {isRequestingReview ? (
                         <Loader2 className="h-4 w-4 animate-spin mr-2" />
                       ) : (
-                        <AlertCircle className="h-4 w-4 mr-2" />
+                        <MessageSquare className="h-4 w-4 mr-2" />
                       )}
-                      Submit Issues
+                      Submit Review Request
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        setShowIssuesForm(false);
-                        setQaIssues('');
+                        setShowReviewForm(false);
+                        setReviewNotes('');
+                        setCommitUrl('');
                       }}
-                      disabled={isVerifyingQa}
+                      disabled={isRequestingReview}
                     >
                       Cancel
                     </Button>
                   </div>
+                </div>
+              )}
+
+              {activeSprint.reviewSummary && (
+                <div className="mt-3 p-3 bg-purple-50 rounded-lg border border-purple-100">
+                  <p className="text-xs font-medium text-purple-800 mb-1">Latest Review Feedback:</p>
+                  <p className="text-sm text-purple-700 whitespace-pre-wrap line-clamp-4">
+                    {activeSprint.reviewSummary}
+                  </p>
                 </div>
               )}
 
