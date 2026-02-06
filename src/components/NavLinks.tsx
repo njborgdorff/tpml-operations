@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 
 const links = [
   { href: '/dashboard', label: 'Dashboard' },
+  { href: '/projects', label: 'Projects' },
   { href: '/finished', label: 'Finished' },
 ]
 
@@ -14,7 +15,7 @@ export function NavLinks() {
   return (
     <nav aria-label="Main navigation" className="flex items-center space-x-4">
       {links.map((link) => {
-        const isActive = pathname === link.href
+        const isActive = pathname === link.href || pathname.startsWith(link.href + '/')
         return (
           <Link
             key={link.href}
