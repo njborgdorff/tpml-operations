@@ -211,6 +211,7 @@ export async function POST(
       } : null,
       projectPath,
       cliCommand: `cd "${projectPath}" && claude`,
+      handoffContent,
       handoffCreated: true,
     });
   } catch (error) {

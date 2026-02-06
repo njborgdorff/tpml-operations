@@ -92,6 +92,7 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
   const [expandedSprints, setExpandedSprints] = useState<Set<string>>(new Set());
   const [editingDevUrl, setEditingDevUrl] = useState<string | null>(null);
   const [devUrlInput, setDevUrlInput] = useState('');
+  const [handoffContent, setHandoffContent] = useState<string | null>(null);
 
   const hasHandoff = artifacts.some(a => a.name === 'HANDOFF_CTO_TO_IMPLEMENTER.md');
   const activeSprint = sprints.find(s => s.status === 'IN_PROGRESS' || s.status === 'REVIEW');
@@ -99,6 +100,20 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
   const completedSprints = sprints.filter(s => s.status === 'COMPLETED').length;
   const totalSprints = sprints.length;
   const progressPercent = totalSprints > 0 ? Math.round((completedSprints / totalSprints) * 100) : 0;
+
+  // Fetch handoff content when project has been kicked off
+  useEffect(() => {
+    if (hasHandoff) {
+      fetch(`/api/projects/${project.id}/kickoff`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.handoffContent) {
+            setHandoffContent(data.handoffContent);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [hasHandoff, project.id]);
 
   const handleKickoff = async () => {
     setIsKicking(true);
@@ -119,6 +134,9 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
         projectPath: data.projectPath,
         cliCommand: data.cliCommand,
       });
+      if (data.handoffContent) {
+        setHandoffContent(data.handoffContent);
+      }
 
       toast.success('Implementation started! Sprint 1 is now in progress.');
       router.refresh();
@@ -158,9 +176,6 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
       setIsUpdating(false);
     }
   };
-
-  // CLI command for this project
-  const cliCommand = `cd "C:\\tpml-ai-team\\projects\\${project.slug}" && claude`;
 
   const toggleSprintExpanded = (sprintId: string) => {
     setExpandedSprints((prev: Set<string>) => {
@@ -533,23 +548,21 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              The handoff document has been created. Copy the command below and paste it into your terminal.
+              The handoff document has been created. Copy the prompt below and paste it into Claude.
             </p>
-            <div className="bg-gray-900 text-gray-100 p-3 rounded-lg font-mono text-sm flex items-center justify-between">
-              <code>{kickoffResult.cliCommand}</code>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-gray-400 hover:text-white"
-                onClick={() => copyCommand(kickoffResult.cliCommand)}
-              >
-                {copiedCommand ? (
-                  <Check className="h-4 w-4" />
-                ) : (
-                  <Copy className="h-4 w-4" />
-                )}
-              </Button>
-            </div>
+            <Button
+              onClick={() => handoffContent && copyCommand(handoffContent)}
+              disabled={!handoffContent}
+              size="lg"
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              {copiedCommand ? (
+                <Check className="h-4 w-4 mr-2" />
+              ) : (
+                <Copy className="h-4 w-4 mr-2" />
+              )}
+              {copiedCommand ? 'Copied!' : 'Copy Prompt'}
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -578,22 +591,19 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
               </p>
             )}
 
-            {/* Copy CLI Command */}
-            <div className="bg-gray-900 text-gray-100 p-3 rounded-lg font-mono text-sm flex items-center justify-between">
-              <code>{cliCommand}</code>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-gray-400 hover:text-white"
-                onClick={() => copyCommand(cliCommand)}
-              >
-                {copiedCommand ? (
-                  <Check className="h-4 w-4" />
-                ) : (
-                  <Copy className="h-4 w-4" />
-                )}
-              </Button>
-            </div>
+            {/* Copy Prompt */}
+            <Button
+              onClick={() => handoffContent && copyCommand(handoffContent)}
+              disabled={!handoffContent}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              {copiedCommand ? (
+                <Check className="h-4 w-4 mr-2" />
+              ) : (
+                <Copy className="h-4 w-4 mr-2" />
+              )}
+              {copiedCommand ? 'Copied!' : 'Copy Prompt'}
+            </Button>
 
             <div className="flex gap-2 pt-2">
               <Button
@@ -620,27 +630,28 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
               </Button>
             </div>
 
-            {/* Manual command as fallback */}
-            <details className="text-sm">
-              <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                Or copy command manually
-              </summary>
-              <div className="mt-2 bg-gray-900 text-gray-100 p-3 rounded-lg font-mono text-sm flex items-center justify-between">
-                <code>{cliCommand}</code>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-gray-400 hover:text-white"
-                  onClick={() => copyCommand(cliCommand)}
-                >
-                  {copiedCommand ? (
-                    <Check className="h-4 w-4" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
-            </details>
+            {/* Copy Prompt fallback */}
+            {handoffContent && (
+              <details className="text-sm">
+                <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+                  Copy implementation prompt
+                </summary>
+                <div className="mt-2">
+                  <Button
+                    onClick={() => copyCommand(handoffContent)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {copiedCommand ? (
+                      <Check className="h-4 w-4 mr-2" />
+                    ) : (
+                      <Copy className="h-4 w-4 mr-2" />
+                    )}
+                    {copiedCommand ? 'Copied!' : 'Copy Prompt'}
+                  </Button>
+                </div>
+              </details>
+            )}
 
             {/* QA Verification Section */}
             <div className="border-t pt-4 mt-4">
