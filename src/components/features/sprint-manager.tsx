@@ -108,6 +108,28 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
   // Derive handoff content: prefer sprint prop, fall back to kickoff response
   const handoffContent = activeSprint?.handoffContent ?? kickoffHandoff;
 
+  // Poll for handoff readiness when sprint is active but handoff isn't stored yet.
+  // This covers the gap between kickoff (async Inngest) and the handoff being written.
+  useEffect(() => {
+    if (!activeSprint || activeSprint.status !== 'IN_PROGRESS' || handoffContent) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/sprints/${activeSprint.id}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.handoffContent) {
+          router.refresh();
+          clearInterval(interval);
+        }
+      } catch {
+        // ignore transient fetch errors
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [activeSprint, handoffContent, router]);
+
   const handleKickoff = async () => {
     setIsKicking(true);
     try {

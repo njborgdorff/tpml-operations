@@ -56,6 +56,7 @@ export async function GET(
       startedAt: sprint.startedAt,
       completedAt: sprint.completedAt,
       reviewSummary: sprint.reviewSummary,
+      handoffContent: sprint.handoffContent,
       project: sprint.project,
       latestReview: sprint.reviews[0] || null,
     });
