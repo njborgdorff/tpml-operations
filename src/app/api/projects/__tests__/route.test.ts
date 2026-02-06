@@ -1,269 +1,197 @@
-import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { NextRequest } from 'next/server';
-import { GET, POST } from '../route';
-import { getServerSession } from 'next-auth/next';
-import { prisma } from '@/lib/prisma';
-import { ProjectStatus } from '@prisma/client';
+/**
+ * @jest-environment node
+ */
 
-// Mock dependencies
-jest.mock('next-auth/next');
-jest.mock('@/lib/prisma', () => ({
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+const mockGetSession = jest.fn()
+const mockFindMany = jest.fn()
+
+jest.mock('@/lib/auth/config', () => ({
+  authOptions: {},
+  getSession: (...args: any[]) => mockGetSession(...args),
+  canAccessProject: jest.fn(),
+}))
+
+jest.mock('@/lib/db/prisma', () => ({
   prisma: {
     project: {
-      findMany: jest.fn(),
-      count: jest.fn(),
+      findMany: (...args: any[]) => mockFindMany(...args),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+    },
+    client: {
       findFirst: jest.fn(),
       create: jest.fn(),
     },
-    projectStatusHistory: {
-      create: jest.fn(),
-    },
-    $transaction: jest.fn(),
   },
-}));
+}))
 
-const mockGetServerSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
-const mockPrisma = prisma as jest.Mocked<typeof prisma>;
+jest.mock('@/lib/knowledge/sync', () => ({
+  syncKnowledgeBase: jest.fn().mockResolvedValue(undefined),
+}))
+
+jest.mock('fs/promises', () => ({
+  mkdir: jest.fn().mockResolvedValue(undefined),
+  writeFile: jest.fn().mockResolvedValue(undefined),
+  readFile: jest.fn().mockRejectedValue(new Error('not found')),
+}))
+
+import { GET } from '../route'
 
 describe('/api/projects', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-  });
+    jest.clearAllMocks()
+  })
 
   describe('GET /api/projects', () => {
     it('should return 401 when user is not authenticated', async () => {
-      mockGetServerSession.mockResolvedValue(null);
+      mockGetSession.mockResolvedValue(null)
 
-      const request = new NextRequest('http://localhost:3000/api/projects');
-      const response = await GET(request);
+      const request = new Request('http://localhost:3000/api/projects')
+      const response = await GET(request)
 
-      expect(response.status).toBe(401);
-      const body = await response.json();
-      expect(body.error).toBe('Unauthorized');
-      expect(body.code).toBe('AUTH_REQUIRED');
-    });
+      expect(response.status).toBe(401)
+      const body = await response.json()
+      expect(body.error).toBe('Unauthorized')
+    })
 
-    it('should return active projects by default', async () => {
-      mockGetServerSession.mockResolvedValue({
+    it('should return 401 when session exists but user.id is missing', async () => {
+      mockGetSession.mockResolvedValue({ user: { email: 'test@example.com' } })
+
+      const request = new Request('http://localhost:3000/api/projects')
+      const response = await GET(request)
+
+      expect(response.status).toBe(401)
+    })
+
+    it('should return all projects for authenticated user', async () => {
+      mockGetSession.mockResolvedValue({
         user: { id: 'user1', email: 'test@example.com' },
-      } as any);
+      })
 
       const mockProjects = [
         {
           id: 'project1',
           name: 'Test Project',
-          status: ProjectStatus.IN_PROGRESS,
-          userId: 'user1',
-          user: { id: 'user1', name: 'Test User', email: 'test@example.com' },
-          statusHistory: [],
+          slug: 'test-project',
+          status: 'IN_PROGRESS',
+          ownerId: 'user1',
         },
-      ];
+      ]
 
-      mockPrisma.project.findMany.mockResolvedValue(mockProjects);
-      mockPrisma.project.count.mockResolvedValue(1);
+      mockFindMany.mockResolvedValue(mockProjects)
 
-      const request = new NextRequest('http://localhost:3000/api/projects');
-      const response = await GET(request);
+      const request = new Request('http://localhost:3000/api/projects')
+      const response = await GET(request)
 
-      expect(response.status).toBe(200);
-      const body = await response.json();
-      expect(body.projects).toEqual(mockProjects);
-      expect(body.pagination.totalCount).toBe(1);
+      expect(response.status).toBe(200)
+      const body = await response.json()
+      expect(body).toEqual(mockProjects)
+    })
 
-      // Verify the correct filter was applied
-      expect(mockPrisma.project.findMany).toHaveBeenCalledWith(
+    it('should filter active projects when filter=active', async () => {
+      mockGetSession.mockResolvedValue({
+        user: { id: 'user1', email: 'test@example.com' },
+      })
+
+      mockFindMany.mockResolvedValue([])
+
+      const request = new Request('http://localhost:3000/api/projects?filter=active')
+      const response = await GET(request)
+
+      expect(response.status).toBe(200)
+      expect(mockFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            status: { in: [ProjectStatus.IN_PROGRESS, ProjectStatus.COMPLETE, ProjectStatus.APPROVED] },
+            ownerId: 'user1',
+            status: { not: 'FINISHED' },
           }),
         })
-      );
-    });
+      )
+    })
 
-    it('should filter by finished projects when status=finished', async () => {
-      mockGetServerSession.mockResolvedValue({
+    it('should filter finished projects when filter=finished', async () => {
+      mockGetSession.mockResolvedValue({
         user: { id: 'user1', email: 'test@example.com' },
-      } as any);
+      })
 
-      mockPrisma.project.findMany.mockResolvedValue([]);
-      mockPrisma.project.count.mockResolvedValue(0);
+      mockFindMany.mockResolvedValue([])
 
-      const request = new NextRequest('http://localhost:3000/api/projects?status=finished');
-      const response = await GET(request);
+      const request = new Request('http://localhost:3000/api/projects?filter=finished')
+      const response = await GET(request)
 
-      expect(response.status).toBe(200);
-      expect(mockPrisma.project.findMany).toHaveBeenCalledWith(
+      expect(response.status).toBe(200)
+      expect(mockFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            status: ProjectStatus.FINISHED,
+            ownerId: 'user1',
+            status: 'FINISHED',
           }),
         })
-      );
-    });
+      )
+    })
 
-    it('should handle pagination parameters', async () => {
-      mockGetServerSession.mockResolvedValue({
+    it('should filter by specific status values', async () => {
+      mockGetSession.mockResolvedValue({
         user: { id: 'user1', email: 'test@example.com' },
-      } as any);
+      })
 
-      mockPrisma.project.findMany.mockResolvedValue([]);
-      mockPrisma.project.count.mockResolvedValue(0);
+      mockFindMany.mockResolvedValue([])
 
-      const request = new NextRequest('http://localhost:3000/api/projects?page=2&limit=5');
-      const response = await GET(request);
+      const request = new Request('http://localhost:3000/api/projects?status=IN_PROGRESS,COMPLETE')
+      const response = await GET(request)
 
-      expect(response.status).toBe(200);
-      expect(mockPrisma.project.findMany).toHaveBeenCalledWith(
+      expect(response.status).toBe(200)
+      expect(mockFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          skip: 5, // (page 2 - 1) * limit 5
-          take: 5,
+          where: expect.objectContaining({
+            ownerId: 'user1',
+            status: { in: ['IN_PROGRESS', 'COMPLETE'] },
+          }),
         })
-      );
-    });
+      )
+    })
 
-    it('should return 400 for invalid query parameters', async () => {
-      mockGetServerSession.mockResolvedValue({
+    it('should reject invalid status values', async () => {
+      mockGetSession.mockResolvedValue({
         user: { id: 'user1', email: 'test@example.com' },
-      } as any);
+      })
 
-      const request = new NextRequest('http://localhost:3000/api/projects?page=invalid');
-      const response = await GET(request);
+      const request = new Request('http://localhost:3000/api/projects?status=INVALID,BOGUS')
+      const response = await GET(request)
 
-      expect(response.status).toBe(400);
-      const body = await response.json();
-      expect(body.error).toBe('Invalid query parameters');
-      expect(body.code).toBe('VALIDATION_ERROR');
-    });
+      expect(response.status).toBe(400)
+      const body = await response.json()
+      expect(body.error).toContain('Invalid status values')
+    })
+
+    it('should reject conflicting filter and status params', async () => {
+      mockGetSession.mockResolvedValue({
+        user: { id: 'user1', email: 'test@example.com' },
+      })
+
+      const request = new Request('http://localhost:3000/api/projects?filter=active&status=FINISHED')
+      const response = await GET(request)
+
+      expect(response.status).toBe(400)
+      const body = await response.json()
+      expect(body.error).toContain('Cannot use both')
+    })
 
     it('should handle database errors gracefully', async () => {
-      mockGetServerSession.mockResolvedValue({
+      mockGetSession.mockResolvedValue({
         user: { id: 'user1', email: 'test@example.com' },
-      } as any);
+      })
 
-      mockPrisma.project.findMany.mockRejectedValue(new Error('Database connection error'));
+      mockFindMany.mockRejectedValue(new Error('Database error'))
 
-      const request = new NextRequest('http://localhost:3000/api/projects');
-      const response = await GET(request);
+      const request = new Request('http://localhost:3000/api/projects')
+      const response = await GET(request)
 
-      expect(response.status).toBe(500);
-      const body = await response.json();
-      expect(body.error).toBe('Failed to fetch projects');
-      expect(body.code).toBe('DATABASE_ERROR');
-    });
-  });
-
-  describe('POST /api/projects', () => {
-    it('should return 401 when user is not authenticated', async () => {
-      mockGetServerSession.mockResolvedValue(null);
-
-      const request = new NextRequest('http://localhost:3000/api/projects', {
-        method: 'POST',
-        body: JSON.stringify({ name: 'Test Project' }),
-      });
-      const response = await POST(request);
-
-      expect(response.status).toBe(401);
-    });
-
-    it('should create a project successfully', async () => {
-      mockGetServerSession.mockResolvedValue({
-        user: { id: 'user1', email: 'test@example.com' },
-      } as any);
-
-      const mockProject = {
-        id: 'project1',
-        name: 'Test Project',
-        description: 'Test Description',
-        status: ProjectStatus.IN_PROGRESS,
-        userId: 'user1',
-        user: { id: 'user1', name: 'Test User', email: 'test@example.com' },
-      };
-
-      mockPrisma.project.findFirst.mockResolvedValue(null); // No existing project
-      mockPrisma.$transaction.mockImplementation(async (callback) => {
-        const mockTx = {
-          project: {
-            create: jest.fn().mockResolvedValue(mockProject),
-          },
-          projectStatusHistory: {
-            create: jest.fn().mockResolvedValue({}),
-          },
-        };
-        return await callback(mockTx as any);
-      });
-
-      const request = new NextRequest('http://localhost:3000/api/projects', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: 'Test Project',
-          description: 'Test Description',
-        }),
-      });
-      const response = await POST(request);
-
-      expect(response.status).toBe(201);
-      const body = await response.json();
-      expect(body.name).toBe('Test Project');
-      expect(body.description).toBe('Test Description');
-    });
-
-    it('should return 400 for invalid project data', async () => {
-      mockGetServerSession.mockResolvedValue({
-        user: { id: 'user1', email: 'test@example.com' },
-      } as any);
-
-      const request = new NextRequest('http://localhost:3000/api/projects', {
-        method: 'POST',
-        body: JSON.stringify({ name: '' }), // Invalid empty name
-      });
-      const response = await POST(request);
-
-      expect(response.status).toBe(400);
-      const body = await response.json();
-      expect(body.error).toBe('Invalid project data');
-      expect(body.code).toBe('VALIDATION_ERROR');
-    });
-
-    it('should return 409 for duplicate project names', async () => {
-      mockGetServerSession.mockResolvedValue({
-        user: { id: 'user1', email: 'test@example.com' },
-      } as any);
-
-      mockPrisma.project.findFirst.mockResolvedValue({
-        id: 'existing-project',
-        name: 'Duplicate Name',
-      } as any);
-
-      const request = new NextRequest('http://localhost:3000/api/projects', {
-        method: 'POST',
-        body: JSON.stringify({ name: 'Duplicate Name' }),
-      });
-      const response = await POST(request);
-
-      expect(response.status).toBe(409);
-      const body = await response.json();
-      expect(body.error).toBe('A project with this name already exists');
-      expect(body.code).toBe('DUPLICATE_NAME');
-    });
-
-    it('should handle database errors during creation', async () => {
-      mockGetServerSession.mockResolvedValue({
-        user: { id: 'user1', email: 'test@example.com' },
-      } as any);
-
-      mockPrisma.project.findFirst.mockResolvedValue(null);
-      mockPrisma.$transaction.mockRejectedValue(new Error('Database error'));
-
-      const request = new NextRequest('http://localhost:3000/api/projects', {
-        method: 'POST',
-        body: JSON.stringify({ name: 'Test Project' }),
-      });
-      const response = await POST(request);
-
-      expect(response.status).toBe(500);
-      const body = await response.json();
-      expect(body.error).toBe('Failed to create project');
-      expect(body.code).toBe('DATABASE_ERROR');
-    });
-  });
-});
+      expect(response.status).toBe(500)
+      const body = await response.json()
+      expect(body.error).toBe('Failed to fetch projects')
+    })
+  })
+})

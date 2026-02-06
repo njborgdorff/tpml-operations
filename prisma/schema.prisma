@@ -23,6 +23,7 @@ model User {
   projects              Project[]
   implementerProjects   Project[] @relation("ImplementerProjects")
   sessions              Session[]
+  statusChanges         ProjectStatusHistory[]
 
   @@map("users")
 }
@@ -67,8 +68,12 @@ model Project {
   id             String        @id @default(cuid())
   name           String
   slug           String        @unique
+  description    String?       @db.Text
   status         ProjectStatus @default(INTAKE)
   projectType    ProjectType   @default(NEW_PROJECT)
+
+  // Archiving
+  archivedAt     DateTime?
 
   // Intake data (business questions)
   intakeData     Json
@@ -105,8 +110,28 @@ model Project {
   sprints        Sprint[]
   conversations  Conversation[]
   artifacts      Artifact[]
+  statusHistory  ProjectStatusHistory[]
 
   @@map("projects")
+}
+
+// ============================================
+// PROJECT STATUS HISTORY
+// ============================================
+
+model ProjectStatusHistory {
+  id         String        @id @default(cuid())
+  projectId  String
+  oldStatus  ProjectStatus?
+  newStatus  ProjectStatus
+  changedBy  String
+  changedAt  DateTime      @default(now())
+
+  project    Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user       User          @relation(fields: [changedBy], references: [id])
+
+  @@index([projectId, changedAt])
+  @@map("project_status_history")
 }
 
 enum ProjectStatus {
@@ -116,7 +141,9 @@ enum ProjectStatus {
   APPROVED
   IN_PROGRESS
   ACTIVE
+  COMPLETE       // Work done, awaiting approval (finished project workflow)
   COMPLETED
+  FINISHED       // Archived/finished (finished project workflow)
   CANCELLED
 }
 

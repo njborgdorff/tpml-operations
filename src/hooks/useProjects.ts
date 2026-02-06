@@ -1,29 +1,37 @@
-import { useState, useEffect } from 'react'
-import { Project, ProjectStatus, ProjectFilters } from '@/types/project'
+import { useState, useEffect, useCallback } from 'react'
+import { Project, ProjectStatus } from '@/types/project'
 
-export function useProjects(filters?: ProjectFilters) {
+export type FilterType = 'ALL' | 'ACTIVE' | 'FINISHED'
+
+interface UseProjectsOptions {
+  filter?: FilterType
+}
+
+export function useProjects(options?: UseProjectsOptions) {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [statusChangeLoading, setStatusChangeLoading] = useState<string | null>(null)
 
-  const fetchProjects = async () => {
+  const filter = options?.filter || 'ALL'
+
+  const fetchProjects = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
-      
+
       const params = new URLSearchParams()
-      if (filters?.status) {
-        params.append('status', filters.status.join(','))
+      if (filter === 'ACTIVE') {
+        params.append('filter', 'active')
+      } else if (filter === 'FINISHED') {
+        params.append('filter', 'finished')
       }
-      if (filters?.showArchived) {
-        params.append('showArchived', 'true')
-      }
-      
+
       const response = await fetch(`/api/projects?${params.toString()}`)
       if (!response.ok) {
         throw new Error('Failed to fetch projects')
       }
-      
+
       const data = await response.json()
       setProjects(data)
     } catch (err) {
@@ -31,14 +39,17 @@ export function useProjects(filters?: ProjectFilters) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [filter])
 
   useEffect(() => {
     fetchProjects()
-  }, [filters?.status?.join(','), filters?.showArchived])
+  }, [fetchProjects])
 
-  const updateProjectStatus = async (projectId: string, status: ProjectStatus) => {
+  const updateProjectStatus = useCallback(async (projectId: string, status: ProjectStatus) => {
     try {
+      setStatusChangeLoading(projectId)
+      setError(null)
+
       const response = await fetch(`/api/projects/${projectId}/status`, {
         method: 'PATCH',
         headers: {
@@ -48,54 +59,43 @@ export function useProjects(filters?: ProjectFilters) {
       })
 
       if (!response.ok) {
-        throw new Error('Failed to update project status')
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to update project status')
       }
 
       const updatedProject = await response.json()
-      
-      setProjects(prevProjects =>
-        prevProjects.map(project =>
-          project.id === projectId ? updatedProject : project
+
+      if (status === ProjectStatus.FINISHED && filter === 'ACTIVE') {
+        // Moving to FINISHED while viewing ACTIVE: remove from list
+        setProjects(prev => prev.filter(p => p.id !== projectId))
+      } else if (status === ProjectStatus.FINISHED && filter === 'FINISHED') {
+        // Moving to FINISHED while viewing FINISHED: refetch to get correct list
+        await fetchProjects()
+      } else {
+        // Normal update: replace in-place
+        setProjects(prev =>
+          prev.map(project =>
+            project.id === projectId ? updatedProject : project
+          )
         )
-      )
+      }
 
       return updatedProject
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update status')
       throw err
+    } finally {
+      setStatusChangeLoading(null)
     }
-  }
-
-  const createProject = async (data: { name: string; description?: string }) => {
-    try {
-      const response = await fetch('/api/projects', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(data),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to create project')
-      }
-
-      const newProject = await response.json()
-      setProjects(prevProjects => [newProject, ...prevProjects])
-      
-      return newProject
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create project')
-      throw err
-    }
-  }
+  }, [filter, fetchProjects])
 
   return {
     projects,
     loading,
     error,
+    statusChangeLoading,
+    clearError: useCallback(() => setError(null), []),
     refetch: fetchProjects,
     updateProjectStatus,
-    createProject,
   }
 }

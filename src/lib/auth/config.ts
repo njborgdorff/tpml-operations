@@ -1,4 +1,4 @@
-import { NextAuthOptions } from 'next-auth';
+import { NextAuthOptions, getServerSession } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/db/prisma';
@@ -11,6 +11,13 @@ export function canAccessProject(
   userId: string
 ): boolean {
   return project.ownerId === userId || project.implementerId === userId;
+}
+
+/**
+ * Get the current session. Wraps getServerSession for testability.
+ */
+export function getSession() {
+  return getServerSession(authOptions);
 }
 
 export const authOptions: NextAuthOptions = {

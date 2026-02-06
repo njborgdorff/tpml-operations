@@ -1,33 +1,39 @@
-"use client";
+'use client'
 
-import { useState, useEffect } from "react";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-
-type FilterType = "active" | "finished";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { FilterType } from '@/hooks/useProjects'
 
 interface ProjectFilterProps {
-  onFilterChange: (filter: FilterType) => void;
-  defaultFilter?: FilterType;
+  value: FilterType
+  onValueChange: (value: FilterType) => void
+  className?: string
 }
 
-export function ProjectFilter({ onFilterChange, defaultFilter = "active" }: ProjectFilterProps) {
-  const [activeFilter, setActiveFilter] = useState<FilterType>(defaultFilter);
+const filterOptions: { value: FilterType; label: string }[] = [
+  { value: 'ALL', label: 'All Projects' },
+  { value: 'ACTIVE', label: 'Active Projects' },
+  { value: 'FINISHED', label: 'Finished Projects' },
+]
 
-  useEffect(() => {
-    onFilterChange(activeFilter);
-  }, [activeFilter, onFilterChange]);
-
-  const handleFilterChange = (value: string) => {
-    const newFilter = value as FilterType;
-    setActiveFilter(newFilter);
-  };
-
+export function ProjectFilter({ value, onValueChange, className }: ProjectFilterProps) {
   return (
-    <Tabs value={activeFilter} onValueChange={handleFilterChange} className="w-full">
-      <TabsList className="grid w-full grid-cols-2">
-        <TabsTrigger value="active">Active Projects</TabsTrigger>
-        <TabsTrigger value="finished">Finished Projects</TabsTrigger>
-      </TabsList>
-    </Tabs>
-  );
+    <Select value={value} onValueChange={(v) => onValueChange(v as FilterType)}>
+      <SelectTrigger className={className}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {filterOptions.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
 }

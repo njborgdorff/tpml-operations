@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth/config';
+import { getSession } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/prisma';
+import { ProjectStatus } from '@prisma/client';
 import { IntakeSchema, IntakeData, NewProjectData, NewFeatureData, BugFixData } from '@/types';
+import { isValidProjectStatus } from '@/lib/project-utils';
 import { syncKnowledgeBase } from '@/lib/knowledge/sync';
 import fs from 'fs/promises';
 import path from 'path';
@@ -118,8 +119,8 @@ Project created. Waiting for PM and CTO to generate development plan.
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const session = await getSession();
+    if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -208,16 +209,57 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const session = await getSession();
+    if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const filter = searchParams.get('filter'); // 'active', 'finished', or null for all
+    const statusParam = searchParams.get('status'); // comma-separated status values
+
+    // Reject conflicting params
+    if (filter && statusParam) {
+      return NextResponse.json(
+        { error: 'Cannot use both filter and status parameters' },
+        { status: 400 }
+      );
+    }
+
+    // Build where clause
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = { ownerId: session.user.id };
+
+    if (filter === 'active') {
+      where.status = { not: ProjectStatus.FINISHED };
+    } else if (filter === 'finished') {
+      where.status = ProjectStatus.FINISHED;
+    } else if (statusParam) {
+      const statuses = statusParam.split(',').map(s => s.trim());
+      const invalidStatuses = statuses.filter(s => !isValidProjectStatus(s));
+      if (invalidStatuses.length > 0) {
+        return NextResponse.json(
+          { error: `Invalid status values: ${invalidStatuses.join(', ')}` },
+          { status: 400 }
+        );
+      }
+      where.status = { in: statuses };
+    }
+
     const projects = await prisma.project.findMany({
-      where: { ownerId: session.user.id },
-      include: { client: true },
+      where,
+      include: {
+        client: true,
+        owner: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
       orderBy: { updatedAt: 'desc' },
     });
 

@@ -5,7 +5,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ProjectStatus } from '@/types/project'
+import { ProjectStatus } from '@prisma/client'
 
 interface ProjectStatusSelectProps {
   value: ProjectStatus
@@ -27,7 +27,7 @@ export function ProjectStatusSelect({
   className
 }: ProjectStatusSelectProps) {
   return (
-    <Select value={value} onValueChange={onChange} disabled={disabled}>
+    <Select value={value} onValueChange={(v) => onChange(v as ProjectStatus)} disabled={disabled}>
       <SelectTrigger className={className}>
         <SelectValue />
       </SelectTrigger>
