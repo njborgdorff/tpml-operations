@@ -78,6 +78,9 @@ model Project {
   // Intake data (business questions)
   intakeData     Json
 
+  // GitHub repository URL (auto-created for NEW_PROJECT type)
+  repositoryUrl  String?
+
   // Target codebase (for bug fixes/enhancements to existing projects)
   // If set, implementation runs in this folder instead of creating a new one
   // Required for NEW_FEATURE and BUG_FIX types

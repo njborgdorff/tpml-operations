@@ -5,6 +5,7 @@ import { ProjectStatus } from '@prisma/client';
 import { IntakeSchema, IntakeData, NewProjectData, NewFeatureData, BugFixData } from '@/types';
 import { isValidProjectStatus } from '@/lib/project-utils';
 import { syncKnowledgeBase } from '@/lib/knowledge/sync';
+import { createGitHubRepo } from '@/lib/github';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -191,6 +192,21 @@ export async function POST(request: Request) {
       } catch (folderError) {
         console.error(`[Projects] Failed to create folder for ${slug}:`, folderError);
         // Don't fail the request - folder creation is secondary
+      }
+
+      // Create a GitHub repository for the new project
+      try {
+        const repo = await createGitHubRepo(slug, `${data.name} — ${client.name}`);
+        if (repo) {
+          await prisma.project.update({
+            where: { id: project.id },
+            data: { repositoryUrl: repo.url },
+          });
+          console.log(`[Projects] Created GitHub repo: ${repo.url}`);
+        }
+      } catch (repoError) {
+        console.error(`[Projects] Failed to create GitHub repo for ${slug}:`, repoError);
+        // Don't fail the request - repo creation is secondary
       }
     } else if (data.targetCodebase) {
       console.log(`[Projects] Using existing codebase: ${data.targetCodebase}`);

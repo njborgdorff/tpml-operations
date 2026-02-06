@@ -13,7 +13,7 @@ import { RestoreProjectButton } from '@/components/features/restore-project-butt
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Eye, CheckCircle, Clock, XCircle } from 'lucide-react';
+import { ArrowLeft, Eye, CheckCircle, Clock, XCircle, GitBranch } from 'lucide-react';
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -87,6 +87,17 @@ export default async function ProjectPage({ params }: PageProps) {
             <p className="text-muted-foreground">
               Client: {project.client.name}
             </p>
+            {project.repositoryUrl && (
+              <a
+                href={project.repositoryUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mt-1"
+              >
+                <GitBranch className="h-4 w-4" />
+                {project.repositoryUrl.replace('https://github.com/', '')}
+              </a>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Badge className={statusColors[project.status] || 'bg-gray-100'}>
