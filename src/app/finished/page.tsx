@@ -4,7 +4,6 @@ import { ProjectCard } from '@/components/ProjectCard'
 import { useProjects } from '@/hooks/useProjects'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ProjectStatus } from '@prisma/client'
 
 export default function FinishedPage() {
   const {

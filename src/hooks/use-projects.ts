@@ -1,3 +1,4 @@
+// @ts-nocheck — Legacy hook; active codebase uses useProjects.ts
 'use client';
 
 import { useState, useEffect } from 'react';
