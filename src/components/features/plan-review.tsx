@@ -64,7 +64,6 @@ export function PlanReview({ project: initialProject }: PlanReviewProps) {
   const [isApproving, setIsApproving] = useState(false);
   const [revisionNotes, setRevisionNotes] = useState('');
   const [showRevisionInput, setShowRevisionInput] = useState(false);
-  const [showDecisionInput, setShowDecisionInput] = useState(false);
   const [decisionAnswers, setDecisionAnswers] = useState<Record<number, string>>({});
 
   const decisions = extractDecisions(project.summary);
@@ -103,17 +102,12 @@ export function PlanReview({ project: initialProject }: PlanReviewProps) {
     }
   }, [initialProject.status, generatePlan]);
 
+  const allDecisionsAnswered = decisions.length === 0 ||
+    decisions.every((_, i) => decisionAnswers[i]?.trim());
+
   const handleApproval = async (action: 'approve' | 'revision' | 'reject') => {
     if (action === 'revision' && !showRevisionInput) {
       setShowRevisionInput(true);
-      setShowDecisionInput(false);
-      return;
-    }
-
-    // If there are decisions and user clicks approve, show decision input first
-    if (action === 'approve' && decisions.length > 0 && !showDecisionInput) {
-      setShowDecisionInput(true);
-      setShowRevisionInput(false);
       return;
     }
 
@@ -236,16 +230,16 @@ export function PlanReview({ project: initialProject }: PlanReviewProps) {
         </CardContent>
       </Card>
 
-      {/* Decision Answers Input */}
-      {showDecisionInput && decisions.length > 0 && (
+      {/* Decision Questions — shown immediately when present */}
+      {decisions.length > 0 && (
         <Card className="border-blue-200 bg-blue-50">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <MessageSquare className="h-5 w-5 text-blue-600" />
-              Your Decisions
+              Decisions Needed
             </CardTitle>
             <CardDescription>
-              Please provide your answers to these questions before approving
+              Answer these questions before approving the plan
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -266,25 +260,6 @@ export function PlanReview({ project: initialProject }: PlanReviewProps) {
                 />
               </div>
             ))}
-            <div className="flex gap-2 pt-4">
-              <Button
-                onClick={() => handleApproval('approve')}
-                disabled={isApproving}
-                className="bg-green-600 hover:bg-green-700"
-              >
-                {isApproving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Check className="h-4 w-4 mr-2" />}
-                Confirm & Approve
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setShowDecisionInput(false);
-                  setDecisionAnswers({});
-                }}
-              >
-                Cancel
-              </Button>
-            </div>
           </CardContent>
         </Card>
       )}
@@ -330,11 +305,16 @@ export function PlanReview({ project: initialProject }: PlanReviewProps) {
       {/* Approval Actions */}
       <Card>
         <CardContent className="py-6">
+          {!allDecisionsAnswered && (
+            <p className="text-sm text-muted-foreground text-center mb-4">
+              Answer all decision questions above to enable approval
+            </p>
+          )}
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Button
               size="lg"
               onClick={() => handleApproval('approve')}
-              disabled={isApproving}
+              disabled={isApproving || !allDecisionsAnswered}
               className="bg-green-600 hover:bg-green-700"
             >
               {isApproving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Check className="h-4 w-4 mr-2" />}
