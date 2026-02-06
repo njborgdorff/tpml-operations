@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
+import Image from 'next/image'
 import Link from 'next/link'
 import { NavLinks } from '@/components/NavLinks'
 import { Toaster } from '@/components/ui/sonner'
@@ -25,8 +26,8 @@ export default function RootLayout({
             <div className="container mx-auto px-4 py-4">
               <nav className="flex items-center justify-between">
                 <div className="flex items-center space-x-6">
-                  <Link href="/projects" className="font-semibold text-xl hover:text-foreground transition-colors">
-                    TPML
+                  <Link href="/projects" className="hover:opacity-80 transition-opacity">
+                    <Image src="/tpml-logo.jpg" alt="TPML" width={100} height={44} priority />
                   </Link>
                   <NavLinks />
                 </div>

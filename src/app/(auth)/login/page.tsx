@@ -6,7 +6,8 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
+import Image from 'next/image';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 
@@ -43,7 +44,7 @@ export default function LoginPage() {
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="text-center">
-        <CardTitle className="text-2xl">TPML</CardTitle>
+        <Image src="/tpml-logo.jpg" alt="TPML" width={120} height={53} className="mx-auto" priority />
         <CardDescription>
           Sign in to manage your AI-staffed organization
         </CardDescription>
