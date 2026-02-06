@@ -36,7 +36,7 @@ export function DeleteProjectButton({
       }
 
       toast.success(`Project "${projectName}" deleted successfully`);
-      router.push('/');
+      router.push('/projects');
       router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to delete project');

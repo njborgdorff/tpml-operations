@@ -1,128 +1,80 @@
-// @ts-nocheck — Legacy route with schema references (createdById, members) that
-// don't exist in the current Prisma schema. Kept for reference; not actively used.
-import { NextRequest, NextResponse } from "next/server"
-import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/lib/auth"
-import { prisma } from "@/lib/prisma"
+import { NextRequest, NextResponse } from 'next/server';
+import { getSession } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/prisma';
 
-// GET /api/projects/[id] - Get project details
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const session = await getServerSession(authOptions)
-    
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-
-    const project = await prisma.project.findFirst({
-      where: {
-        id: params.id,
-        OR: [
-          { createdById: session.user.id },
-          { members: { some: { userId: session.user.id } } }
-        ]
-      },
-      include: {
-        createdBy: {
-          select: { name: true, email: true }
-        },
-        members: {
-          include: {
-            user: {
-              select: { name: true, email: true }
-            }
-          }
-        }
-      }
-    })
-
-    if (!project) {
-      return NextResponse.json(
-        { error: "Project not found or access denied" },
-        { status: 404 }
-      )
-    }
-
-    return NextResponse.json(project)
-  } catch (error) {
-    console.error("Error fetching project:", error)
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    )
-  }
+interface RouteParams {
+  params: {
+    id: string;
+  };
 }
 
-// PATCH /api/projects/[id] - Update project
-export async function PATCH(
+// DELETE /api/projects/[id] - Delete a project and all related data
+export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: RouteParams
 ) {
   try {
-    const session = await getServerSession(authOptions)
-    
+    const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Verify user is project owner or admin
+    // Verify user owns the project
     const project = await prisma.project.findFirst({
       where: {
         id: params.id,
-        OR: [
-          { createdById: session.user.id },
-          { 
-            members: { 
-              some: { 
-                userId: session.user.id,
-                role: { in: ["OWNER", "ADMIN"] }
-              } 
-            } 
-          }
-        ]
-      }
-    })
+        ownerId: session.user.id,
+      },
+      include: {
+        sprints: { select: { id: true } },
+      },
+    });
 
     if (!project) {
       return NextResponse.json(
-        { error: "Project not found or insufficient permissions" },
+        { error: 'Project not found' },
         { status: 404 }
-      )
+      );
     }
 
-    const { name, description, status } = await request.json()
+    // Delete in order to respect foreign key constraints
+    await prisma.$transaction(async (tx) => {
+      const sprintIds = project.sprints.map(s => s.id);
 
-    const updateData: any = {}
-    if (name !== undefined) updateData.name = name
-    if (description !== undefined) updateData.description = description
-    if (status !== undefined) updateData.status = status
-
-    const updatedProject = await prisma.project.update({
-      where: { id: params.id },
-      data: updateData,
-      include: {
-        createdBy: {
-          select: { name: true, email: true }
-        },
-        members: {
-          include: {
-            user: {
-              select: { name: true, email: true }
-            }
-          }
-        }
+      // 1. Sprint reviews (reference sprints)
+      if (sprintIds.length > 0) {
+        await tx.sprintReview.deleteMany({
+          where: { sprintId: { in: sprintIds } },
+        });
       }
-    })
 
-    return NextResponse.json(updatedProject)
+      // 2. Sprints (reference project, RESTRICT)
+      await tx.sprint.deleteMany({
+        where: { projectId: params.id },
+      });
+
+      // 3. Artifacts (reference project, RESTRICT)
+      await tx.artifact.deleteMany({
+        where: { projectId: params.id },
+      });
+
+      // 4. Conversations (reference project, RESTRICT)
+      await tx.conversation.deleteMany({
+        where: { projectId: params.id },
+      });
+
+      // 5. Project (CASCADE handles reference_documents, project_status_history)
+      await tx.project.delete({
+        where: { id: params.id },
+      });
+    });
+
+    return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error updating project:", error)
+    console.error('Failed to delete project:', error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: 'Failed to delete project' },
       { status: 500 }
-    )
+    );
   }
 }
