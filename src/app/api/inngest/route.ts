@@ -1864,7 +1864,7 @@ const handleProjectKickoff = inngest.createFunction(
       projectName,
       projectSlug,
       clientName,
-      sprintId: _sprintId,
+      sprintId,
       sprintNumber,
       sprintName,
       handoffContent,
@@ -2198,6 +2198,18 @@ Keep your response focused on architecture validation. Be concise but thorough.`
         // Skip Architect review for features
         console.log(`[Kickoff] Feature workflow - skipping Architect review`);
       }
+    }
+
+    // Store handoff content on the sprint record so the UI Copy Prompt button
+    // activates only after CTO/Architect/Implementer review is complete
+    if (sprintId) {
+      await step.run('store-sprint-handoff', async () => {
+        await prisma.sprint.update({
+          where: { id: sprintId },
+          data: { handoffContent: handoffContent },
+        });
+        console.log(`[Kickoff] Stored handoffContent on sprint ${sprintId}`);
+      });
     }
 
     // =========================================================================

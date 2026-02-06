@@ -184,6 +184,7 @@ export default async function ProjectPage({ params }: PageProps) {
           completedAt: s.completedAt?.toISOString() || null,
           reviewSummary: (s as { reviewSummary?: string | null }).reviewSummary ?? null,
           devServerUrl: (s as { devServerUrl?: string | null }).devServerUrl ?? null,
+          handoffContent: (s as { handoffContent?: string | null }).handoffContent ?? null,
         }))}
         artifacts={project.artifacts.map((a) => ({
           id: a.id,

@@ -145,12 +145,12 @@ export async function POST(
       },
     });
 
-    // Update first sprint status to IN_PROGRESS
+    // Update first sprint status to IN_PROGRESS and store handoff content
     const firstSprint = project.sprints.find(s => s.number === 1);
     if (firstSprint) {
       await prisma.sprint.update({
         where: { id: firstSprint.id },
-        data: { status: 'IN_PROGRESS', startedAt: new Date() },
+        data: { status: 'IN_PROGRESS', startedAt: new Date(), handoffContent },
       });
     }
 

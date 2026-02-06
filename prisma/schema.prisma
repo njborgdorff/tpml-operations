@@ -179,8 +179,9 @@ model Sprint {
   startedAt   DateTime?
   completedAt DateTime?
 
-  reviewSummary String?    @db.Text
-  devServerUrl  String?    // URL to test/preview the sprint deliverables
+  reviewSummary  String?    @db.Text
+  devServerUrl   String?    // URL to test/preview the sprint deliverables
+  handoffContent String?    @db.Text  // Sprint-specific handoff prompt for Copy Prompt button
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

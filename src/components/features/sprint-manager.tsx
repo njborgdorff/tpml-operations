@@ -38,6 +38,7 @@ interface Sprint {
   completedAt: string | null;
   reviewSummary: string | null;
   devServerUrl: string | null;
+  handoffContent: string | null;
 }
 
 interface Artifact {
@@ -92,8 +93,6 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
   const [expandedSprints, setExpandedSprints] = useState<Set<string>>(new Set());
   const [editingDevUrl, setEditingDevUrl] = useState<string | null>(null);
   const [devUrlInput, setDevUrlInput] = useState('');
-  const [handoffContent, setHandoffContent] = useState<string | null>(null);
-
   const [isContinuing, setIsContinuing] = useState(false);
 
   const hasHandoff = artifacts.some(a => a.name === 'HANDOFF_CTO_TO_IMPLEMENTER.md');
@@ -103,19 +102,11 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
   const totalSprints = sprints.length;
   const progressPercent = totalSprints > 0 ? Math.round((completedSprints / totalSprints) * 100) : 0;
 
-  // Fetch handoff content when project has been kicked off
-  useEffect(() => {
-    if (hasHandoff) {
-      fetch(`/api/projects/${project.id}/kickoff`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.handoffContent) {
-            setHandoffContent(data.handoffContent);
-          }
-        })
-        .catch(() => {});
-    }
-  }, [hasHandoff, project.id]);
+  // Handoff content from kickoff response (before server refresh completes)
+  const [kickoffHandoff, setKickoffHandoff] = useState<string | null>(null);
+
+  // Derive handoff content: prefer sprint prop, fall back to kickoff response
+  const handoffContent = activeSprint?.handoffContent ?? kickoffHandoff;
 
   const handleKickoff = async () => {
     setIsKicking(true);
@@ -137,7 +128,7 @@ export function SprintManager({ project, sprints, artifacts }: SprintManagerProp
         cliCommand: data.cliCommand,
       });
       if (data.handoffContent) {
-        setHandoffContent(data.handoffContent);
+        setKickoffHandoff(data.handoffContent);
       }
 
       toast.success('Implementation started! Sprint 1 is now in progress.');
