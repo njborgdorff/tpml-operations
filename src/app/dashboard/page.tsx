@@ -21,7 +21,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="container mx-auto py-8">
+      <div className="py-8">
         <div className="flex items-center justify-center min-h-96">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
@@ -61,7 +61,7 @@ export default function DashboardPage() {
   }, {} as Record<string, number>)
 
   return (
-    <div className="container mx-auto py-8 space-y-6">
+    <div className="py-8 space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>

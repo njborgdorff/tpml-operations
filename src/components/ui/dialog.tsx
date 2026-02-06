@@ -72,6 +72,8 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
         >
           {children}
           <button
+            type="button"
+            aria-label="Close"
             className="absolute top-4 right-4 text-gray-500 hover:text-gray-700"
             onClick={() => context.onOpenChange(false)}
           >

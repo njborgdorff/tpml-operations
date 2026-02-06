@@ -12,7 +12,7 @@ export function NavLinks() {
   const pathname = usePathname()
 
   return (
-    <div className="flex items-center space-x-4">
+    <nav aria-label="Main navigation" className="flex items-center space-x-4">
       {links.map((link) => {
         const isActive = pathname === link.href
         return (
@@ -27,6 +27,6 @@ export function NavLinks() {
           </Link>
         )
       })}
-    </div>
+    </nav>
   )
 }

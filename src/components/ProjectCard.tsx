@@ -8,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { ProjectStatusBadge } from './ProjectStatusBadge'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
 import { Project, ProjectStatus } from '@/types/project'
@@ -140,18 +141,25 @@ export function ProjectCard({ project, onStatusUpdate, isUpdating: externalUpdat
               <span className="text-sm text-muted-foreground">Updating...</span>
             ) : (
               <>
-                <button
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => setShowActions(!showActions)}
                   disabled={updating}
-                  className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3"
+                  aria-expanded={showActions}
+                  aria-haspopup="menu"
                 >
                   Actions
-                </button>
+                </Button>
                 {showActions && (
-                  <div className="absolute bottom-full left-0 mb-1 w-48 rounded-md border bg-popover p-1 shadow-md z-50">
+                  <div
+                    role="menu"
+                    className="absolute bottom-full left-0 mb-1 w-48 rounded-md border bg-popover p-1 shadow-md z-50"
+                  >
                     {actions.map((action) => (
                       <button
                         key={action.status}
+                        role="menuitem"
                         onClick={() => handleStatusChange(action.status)}
                         className="w-full text-left rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer"
                       >

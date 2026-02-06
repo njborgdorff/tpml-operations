@@ -1,9 +1,5 @@
-import { ProjectList } from '@/components/ProjectList'
+import { redirect } from 'next/navigation'
 
 export default function HomePage() {
-  return (
-    <div className="space-y-8">
-      <ProjectList />
-    </div>
-  )
+  redirect('/dashboard')
 }
