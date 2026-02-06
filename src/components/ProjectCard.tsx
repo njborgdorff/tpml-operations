@@ -9,6 +9,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { ProjectStatusBadge } from './ProjectStatusBadge'
+import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
 import { Project, ProjectStatus } from '@/types/project'
 import { formatDate } from '@/lib/utils'
 
@@ -16,6 +17,7 @@ interface ProjectCardProps {
   project: Project
   onStatusUpdate: (projectId: string, status: ProjectStatus) => Promise<void>
   isUpdating?: boolean
+  readOnly?: boolean
   className?: string
 }
 
@@ -39,10 +41,12 @@ function getAvailableActions(status: ProjectStatus): { label: string; status: Pr
   }
 }
 
-export function ProjectCard({ project, onStatusUpdate, isUpdating: externalUpdating, className }: ProjectCardProps) {
+export function ProjectCard({ project, onStatusUpdate, isUpdating: externalUpdating, readOnly, className }: ProjectCardProps) {
   const [isUpdating, setIsUpdating] = useState(false)
   const [updateError, setUpdateError] = useState<string | null>(null)
   const [showActions, setShowActions] = useState(false)
+  const [showArchiveDialog, setShowArchiveDialog] = useState(false)
+  const [archiveLoading, setArchiveLoading] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
   const updating = externalUpdating || isUpdating
@@ -62,6 +66,11 @@ export function ProjectCard({ project, onStatusUpdate, isUpdating: externalUpdat
   }, [showActions])
 
   const handleStatusChange = async (newStatus: ProjectStatus) => {
+    if (newStatus === ProjectStatus.FINISHED) {
+      setShowActions(false)
+      setShowArchiveDialog(true)
+      return
+    }
     setIsUpdating(true)
     setShowActions(false)
     setUpdateError(null)
@@ -73,6 +82,21 @@ export function ProjectCard({ project, onStatusUpdate, isUpdating: externalUpdat
       console.error('Failed to update status:', error)
     } finally {
       setIsUpdating(false)
+    }
+  }
+
+  const handleArchiveConfirm = async () => {
+    setArchiveLoading(true)
+    setUpdateError(null)
+    try {
+      await onStatusUpdate(project.id, ProjectStatus.FINISHED)
+      setShowArchiveDialog(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update status'
+      setUpdateError(message)
+      console.error('Failed to update status:', error)
+    } finally {
+      setArchiveLoading(false)
     }
   }
 
@@ -109,7 +133,7 @@ export function ProjectCard({ project, onStatusUpdate, isUpdating: externalUpdat
         </CardContent>
       )}
 
-      {actions.length > 0 && (
+      {!readOnly && actions.length > 0 && (
         <CardFooter>
           <div className="relative" ref={menuRef}>
             {updating ? (
@@ -141,6 +165,14 @@ export function ProjectCard({ project, onStatusUpdate, isUpdating: externalUpdat
           </div>
         </CardFooter>
       )}
+
+      <ArchiveConfirmDialog
+        open={showArchiveDialog}
+        onOpenChange={setShowArchiveDialog}
+        projectName={project.name}
+        onConfirm={handleArchiveConfirm}
+        isLoading={archiveLoading}
+      />
     </Card>
   )
 }

@@ -1,3 +1,5 @@
+'use client'
+
 import { useState, useMemo } from 'react'
 import { ProjectCard } from './ProjectCard'
 import { ProjectFilters } from './ProjectFilters'

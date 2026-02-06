@@ -236,4 +236,98 @@ describe('ProjectCard', () => {
 
     consoleSpy.mockRestore()
   })
+
+  // Sprint 2 tests: Archive confirmation dialog + readOnly prop
+
+  it('should open archive confirmation dialog when clicking Move to Finished', () => {
+    const approvedProject = {
+      ...mockProject,
+      status: ProjectStatus.APPROVED,
+    }
+
+    render(
+      <ProjectCard
+        project={approvedProject}
+        onStatusUpdate={mockOnStatusUpdate}
+      />
+    )
+
+    const actionsButton = screen.getByRole('button')
+    fireEvent.click(actionsButton)
+
+    const finishedAction = screen.getByText('Move to Finished')
+    fireEvent.click(finishedAction)
+
+    // Should open dialog instead of calling onStatusUpdate directly
+    expect(mockOnStatusUpdate).not.toHaveBeenCalled()
+    expect(screen.getByText('Move to Finished?')).toBeInTheDocument()
+  })
+
+  it('should call onStatusUpdate with FINISHED after confirming archive dialog', async () => {
+    const approvedProject = {
+      ...mockProject,
+      status: ProjectStatus.APPROVED,
+    }
+
+    render(
+      <ProjectCard
+        project={approvedProject}
+        onStatusUpdate={mockOnStatusUpdate}
+      />
+    )
+
+    // Open actions, click Move to Finished
+    fireEvent.click(screen.getByRole('button'))
+    fireEvent.click(screen.getByText('Move to Finished'))
+
+    // Confirm in dialog
+    fireEvent.click(screen.getByText('Confirm'))
+
+    await waitFor(() => {
+      expect(mockOnStatusUpdate).toHaveBeenCalledWith('project1', ProjectStatus.FINISHED)
+    })
+  })
+
+  it('should NOT call onStatusUpdate when cancelling archive dialog', () => {
+    const approvedProject = {
+      ...mockProject,
+      status: ProjectStatus.APPROVED,
+    }
+
+    render(
+      <ProjectCard
+        project={approvedProject}
+        onStatusUpdate={mockOnStatusUpdate}
+      />
+    )
+
+    // Open actions, click Move to Finished
+    fireEvent.click(screen.getByRole('button'))
+    fireEvent.click(screen.getByText('Move to Finished'))
+
+    // Cancel in dialog
+    fireEvent.click(screen.getByText('Cancel'))
+
+    expect(mockOnStatusUpdate).not.toHaveBeenCalled()
+    expect(screen.queryByText('Move to Finished?')).not.toBeInTheDocument()
+  })
+
+  it('should hide action buttons when readOnly prop is true', () => {
+    const approvedProject = {
+      ...mockProject,
+      status: ProjectStatus.APPROVED,
+    }
+
+    render(
+      <ProjectCard
+        project={approvedProject}
+        onStatusUpdate={mockOnStatusUpdate}
+        readOnly
+      />
+    )
+
+    // Should render project info but no actions button
+    expect(screen.getByText('Test Project')).toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
 })
