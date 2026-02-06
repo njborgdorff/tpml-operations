@@ -50,9 +50,10 @@ export async function POST(
       );
     }
 
-    // Get handoff artifact content
+    // Prefer sprint-level handoff (set after CTO/Architect review for this sprint),
+    // fall back to project-level HANDOFF artifact (always Sprint 1's content)
     const handoffArtifact = project.artifacts.find(a => a.type === 'HANDOFF');
-    const handoffContent = handoffArtifact?.content || '';
+    const handoffContent = activeSprint.handoffContent || handoffArtifact?.content || '';
 
     if (!handoffContent) {
       return NextResponse.json(
