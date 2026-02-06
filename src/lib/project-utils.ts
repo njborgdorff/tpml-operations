@@ -27,11 +27,18 @@ export const PROJECT_STATUS_COLORS: Record<string, string> = {
 }
 
 // Status transitions for the finished project workflow
+// Any non-terminal status can be archived (moved to FINISHED) by the owner
 export const FINISHED_WORKFLOW_TRANSITIONS: Partial<Record<ProjectStatus, ProjectStatus[]>> = {
-  [ProjectStatus.IN_PROGRESS]: [ProjectStatus.COMPLETE],
-  [ProjectStatus.COMPLETE]: [ProjectStatus.IN_PROGRESS, ProjectStatus.APPROVED],
-  [ProjectStatus.APPROVED]: [ProjectStatus.COMPLETE, ProjectStatus.FINISHED],
+  [ProjectStatus.INTAKE]: [ProjectStatus.PLANNING, ProjectStatus.FINISHED],
+  [ProjectStatus.PLANNING]: [ProjectStatus.REVIEW, ProjectStatus.FINISHED],
+  [ProjectStatus.REVIEW]: [ProjectStatus.APPROVED, ProjectStatus.FINISHED],
+  [ProjectStatus.APPROVED]: [ProjectStatus.COMPLETE, ProjectStatus.IN_PROGRESS, ProjectStatus.FINISHED],
+  [ProjectStatus.IN_PROGRESS]: [ProjectStatus.COMPLETE, ProjectStatus.FINISHED],
+  [ProjectStatus.ACTIVE]: [ProjectStatus.COMPLETE, ProjectStatus.FINISHED],
+  [ProjectStatus.COMPLETE]: [ProjectStatus.IN_PROGRESS, ProjectStatus.APPROVED, ProjectStatus.FINISHED],
+  [ProjectStatus.COMPLETED]: [ProjectStatus.FINISHED],
   [ProjectStatus.FINISHED]: [],
+  [ProjectStatus.CANCELLED]: [ProjectStatus.FINISHED],
 }
 
 export class ProjectValidationError extends Error {
@@ -99,7 +106,7 @@ export function isValidProjectStatus(status: string): status is ProjectStatus {
  * Checks if a project can be moved to finished status
  */
 export function canMoveToFinished(status: ProjectStatus): boolean {
-  return status === ProjectStatus.APPROVED
+  return status !== ProjectStatus.FINISHED
 }
 
 /**
